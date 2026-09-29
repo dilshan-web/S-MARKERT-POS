@@ -3628,7 +3628,21 @@ class FirestoreCollection {
   }
 
   async clear() {
+    const keys = Array.from(this.docsMap.keys());
     this.docsMap.clear();
+
+    if (this.dbInstance && this.dbInstance.sdk && this.dbInstance.firestoreDb) {
+      try {
+        const promises = [];
+        for (const docId of keys) {
+          const docRef = this.dbInstance.sdk.doc(this.dbInstance.firestoreDb, this.name, String(docId));
+          promises.push(this.dbInstance.sdk.deleteDoc(docRef).catch(() => {}));
+        }
+        await Promise.all(promises);
+      } catch (e) {
+        console.warn(`[Firestore] Error clearing collection "${this.name}":`, e);
+      }
+    }
   }
 
   async bulkAdd(items) {
@@ -4345,9 +4359,10 @@ async function seedDatabaseIfEmpty() {
     await db.products.bulkAdd(productsData);
   }
 
-  // 8. Seed sample Expenses if empty
+  // 8. Seed sample Expenses if empty (only on brand new initialization)
   const expCount = await db.expenses.count();
-  if (expCount === 0) {
+  const allowSampleData = localStorage.getItem('lankapos_no_sample_sales') !== 'true';
+  if (expCount === 0 && allowSampleData) {
     const today = getLocalDateStr(new Date());
     await db.expenses.bulkAdd([
       { id: 1, title: 'Shop Electricity Bill (CEB)', category: 'Electricity', amount: 14500, date: today, notes: 'Monthly shop bill', user: 'admin', timestamp: new Date().toISOString() },
@@ -4355,9 +4370,9 @@ async function seedDatabaseIfEmpty() {
     ]);
   }
 
-  // 9. Seed sample Sales if empty so Dashboard & Reports are active immediately
+  // 9. Seed sample Sales if empty (only on initial test run)
   const salesCount = await db.sales.count();
-  if (salesCount === 0) {
+  if (salesCount === 0 && allowSampleData) {
     const now = new Date();
     const sampleSales = [
       {
@@ -10979,9 +10994,19 @@ const BackupManager = {
       link.click();
       document.body.removeChild(link);
 
+      // Set flag to prevent sample sales from auto-populating after reset
+      localStorage.setItem('lankapos_no_sample_sales', 'true');
+
       // 2. Perform Clean Reset based on selected mode
       if (selectedOption === 'full') {
-        // Clear all tables
+        // Clear saved passwords & active sessions from localStorage
+        try {
+          localStorage.removeItem('pos_saved_passwords');
+          sessionStorage.removeItem('lankapos_user');
+          localStorage.removeItem('lankapos_held_bills');
+        } catch (e) {}
+
+        // Clear all tables (deletes Firestore cloud documents + in-memory cache)
         const allTables = [
           db.users, db.categories, db.products, db.customers,
           db.suppliers, db.sales, db.saleItems, db.returns, db.vouchers, db.holdBills,
@@ -10990,24 +11015,11 @@ const BackupManager = {
         ];
         if (db.creditPayments) allTables.push(db.creditPayments);
 
-        await db.transaction('rw', allTables, async () => {
-          await db.users.clear();
-          await db.categories.clear();
-          await db.products.clear();
-          await db.customers.clear();
-          if (db.creditPayments) await db.creditPayments.clear();
-          await db.suppliers.clear();
-          await db.sales.clear();
-          await db.saleItems.clear();
-          await db.returns.clear();
-          await db.vouchers.clear();
-          await db.holdBills.clear();
-          await db.purchases.clear();
-          await db.stockAdjustments.clear();
-          await db.expenses.clear();
-          await db.shifts.clear();
-          await db.settings.clear();
-        });
+        for (const tbl of allTables) {
+          if (tbl && typeof tbl.clear === 'function') {
+            await tbl.clear();
+          }
+        }
 
         // Re-seed clean starting catalog and zero-transaction state
         await seedDatabaseIfEmpty();
@@ -11015,28 +11027,23 @@ const BackupManager = {
         // Transactions Only Reset: Clears sales, saleItems, returns, expenses, shifts, holdBills, adjustments, creditPayments
         const txnTables = [
           db.sales, db.saleItems, db.returns, db.vouchers, db.holdBills,
-          db.purchases, db.stockAdjustments, db.expenses, db.shifts, db.customers
+          db.purchases, db.stockAdjustments, db.expenses, db.shifts
         ];
         if (db.creditPayments) txnTables.push(db.creditPayments);
 
-        await db.transaction('rw', txnTables, async () => {
-          await db.sales.clear();
-          await db.saleItems.clear();
-          await db.returns.clear();
-          await db.vouchers.clear();
-          await db.holdBills.clear();
-          if (db.creditPayments) await db.creditPayments.clear();
-          await db.purchases.clear();
-          await db.stockAdjustments.clear();
-          await db.expenses.clear();
-          await db.shifts.clear();
+        for (const tbl of txnTables) {
+          if (tbl && typeof tbl.clear === 'function') {
+            await tbl.clear();
+          }
+        }
 
-          // Reset customer credit/points to zero
+        // Reset customer credit/points to zero in Firestore and locally
+        try {
           const customers = await db.customers.toArray();
           for (const c of customers) {
             await db.customers.update(c.id, { creditBalance: 0, points: 0, totalSpent: 0 });
           }
-        });
+        } catch (e) {}
       }
 
       SoundManager.playSuccessChime();
