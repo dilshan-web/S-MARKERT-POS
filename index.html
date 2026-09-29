@@ -471,21 +471,42 @@ input[type=number] {
     window.savePasswordToStorage = savePasswordToStorage;
 
     function doInstantLogin(rawU, rawP) {
-      var u = rawU.toLowerCase();
+      var u = (rawU || '').toLowerCase().trim();
+      var p = (rawP || '').trim();
+
+      // 1. Prioritize live synced database (db.users)
+      if (window.db && window.db.users && window.db.users.docsMap && window.db.users.docsMap.size > 0) {
+        var allDbUsers = Array.from(window.db.users.docsMap.values());
+        for (var j = 0; j < allDbUsers.length; j++) {
+          var dbAcc = allDbUsers[j];
+          if (dbAcc.active === 0) continue;
+          var dbU = (dbAcc.username || '').toLowerCase().trim();
+          var dbPass = (dbAcc.password || '').trim();
+          var dbPin = (dbAcc.pin || '').trim();
+
+          // PIN-only login
+          if (rawU && !rawP && (dbPin === rawU)) return dbAcc;
+          if (!rawU && rawP && (dbPin === rawP)) return dbAcc;
+          // Username + Password / PIN
+          if (rawU && rawP && dbU === u) {
+            if (dbPass === p || dbPin === p) return dbAcc;
+          }
+        }
+        // If live DB has users and user is not matched, return null (strictly reject deleted users)
+        return null;
+      }
+
+      // 2. Fallback only if DB is completely empty before initialization
       var matched = null;
       var savedPwds = getSavedPasswords();
-
       for (var i = 0; i < BUILTIN_ACCOUNTS.length; i++) {
         var acc = BUILTIN_ACCOUNTS[i];
         var saved = savedPwds[acc.username] || null;
-        // Use saved password/pin if exists, otherwise use built-in
         var validPassword = saved ? saved.password : acc.password;
         var validPin      = (saved && saved.pin) ? saved.pin : acc.pin;
 
-        // PIN only (field 1 has pin, field 2 empty)
         if (rawU && !rawP && validPin === rawU) { matched = acc; break; }
         if (!rawU && rawP && validPin === rawP) { matched = acc; break; }
-        // Username + password or pin
         if (rawU && rawP && acc.username === u) {
           if (validPassword === rawP || validPin === rawP) { matched = acc; break; }
         }
@@ -4643,15 +4664,15 @@ const AuthManager = {
     ];
 
     let user = null;
+    let dbChecked = false;
 
-    // 1. Check live database with quick safety timeout
+    // 1. Check live database
     try {
       if (typeof db !== 'undefined' && db && db.users) {
-        const fetchPromise = db.users.toArray();
-        const timeoutPromise = new Promise(resolve => setTimeout(() => resolve([]), 500));
-        const allUsers = await Promise.race([fetchPromise, timeoutPromise]);
+        const allUsers = await db.users.toArray();
 
         if (Array.isArray(allUsers) && allUsers.length > 0) {
+          dbChecked = true;
           user = allUsers.find(userRecord => {
             const dbUser = (userRecord.username || '').trim().toLowerCase();
             const dbPass = (userRecord.password || '').trim();
@@ -4665,13 +4686,9 @@ const AuthManager = {
             if (!rawU && rawP && dbPin && dbPin === rawP) return true;
 
             // Username & Password / PIN
-            if (rawU && rawP && (dbUser === u || (u === 'cashier' && dbUser === 'cashier1'))) {
+            if (rawU && rawP && dbUser === u) {
               if (dbPass && dbPass === p) return true;
               if (dbPin && dbPin === p) return true;
-              if (!dbPass) {
-                const defPass = userRecord.role === 'admin' ? 'admin123' : userRecord.role === 'manager' ? 'manager123' : 'cashier123';
-                if (p === defPass) return true;
-              }
             }
             return false;
           });
@@ -4681,22 +4698,27 @@ const AuthManager = {
       console.warn('[Auth] Database user query notice:', err);
     }
 
-    // 2. If not found in DB or DB loading/offline, match against standard built-in accounts
-    if (!user) {
-      user = defaultAccounts.find(acc => {
-        // PIN only
-        if (rawU && !rawP && acc.pins && acc.pins.includes(rawU)) return true;
-        if (!rawU && rawP && acc.pins && acc.pins.includes(rawP)) return true;
-
-        // Username & Password
-        if (rawU && rawP) {
-          const isUserMatch = acc.username === u || (acc.aliases && acc.aliases.includes(u));
-          if (isUserMatch) {
-            return acc.passwords.includes(p) || (acc.pins && acc.pins.includes(p));
+    // 2. Fallback ONLY if database is totally uninitialized
+    if (!user && !dbChecked) {
+      if (u === 'admin' && (p === 'admin6435' || p === '9999')) {
+        user = {
+          id: 1,
+          username: 'admin',
+          password: 'admin6435',
+          fullName: 'Super Admin',
+          role: 'admin',
+          pin: '9999',
+          active: 1,
+          permissions: {
+            dashboard: true, pos: true, inventory: true, grn: true,
+            customers: true, credit: true, suppliers: true, expenses: true,
+            shifts: true, reports: true, settings: true, users: true,
+            allowCreditEdit: true, allowCreditDelete: true, allowPriceEdit: true,
+            allowDiscount: true, allowReturns: true, allowDelete: true,
+            allowStockAdjustment: true
           }
-        }
-        return false;
-      });
+        };
+      }
     }
 
     // 3. If valid user matched, perform login
@@ -5125,6 +5147,12 @@ const AuthManager = {
 
     document.getElementById('userModal').classList.add('hidden');
     await this.renderUsersTable();
+    if (window.DashboardManager) {
+      try {
+        await DashboardManager.populateStaffDropdown();
+        await DashboardManager.renderDashboard();
+      } catch (e) {}
+    }
     SoundManager.playSuccessChime();
     alert('User and permissions saved successfully!');
   },
@@ -5133,6 +5161,13 @@ const AuthManager = {
     if (confirm('Are you sure you want to delete this user?')) {
       await db.users.delete(id);
       await this.renderUsersTable();
+      if (window.DashboardManager) {
+        try {
+          await DashboardManager.populateStaffDropdown();
+          await DashboardManager.renderDashboard();
+        } catch (e) {}
+      }
+      SoundManager.playSuccessChime();
     }
   }
 };
@@ -11398,10 +11433,10 @@ const DashboardManager = {
     const isCashier = AuthManager.currentUser && AuthManager.currentUser.role === 'cashier';
     const isManagerOrAdmin = AuthManager.currentUser && (AuthManager.currentUser.role === 'admin' || AuthManager.currentUser.role === 'manager');
 
-    // 1. Executive Strip (Profit & Valuation): Hide completely for Cashiers
+    // 1. Executive Strip (Profit & Valuation): Hide for Cashiers OR when filtering by individual staff member
     const execStrip = document.getElementById('dashExecutiveStrip');
     if (execStrip) {
-      if (isCashier) {
+      if (isCashier || (this.selectedStaffId && this.selectedStaffId !== 'all')) {
         execStrip.classList.add('hidden');
       } else {
         execStrip.classList.remove('hidden');
