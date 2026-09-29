@@ -1,4 +1,4 @@
-const CACHE_NAME = 'lankapos-v3.1.0-mobile';
+const CACHE_NAME = 'lankapos-v3.2.0-layout';
 
 const STATIC_ASSETS = [
   './',
