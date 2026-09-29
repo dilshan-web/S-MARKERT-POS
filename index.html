@@ -678,6 +678,34 @@ input[type=number] {
 
 
 
+    function getRoleDefaultPermissions(role) {
+      if (role === 'cashier') {
+        return {
+          pos: true, dashboard: true, shifts: true, customers: true, credit: true,
+          inventory: false, grn: false, suppliers: false, expenses: false, reports: false,
+          settings: false, users: false, allowCreditEdit: false, allowCreditDelete: false,
+          allowPriceEdit: false, allowDiscount: true, allowReturns: false, allowDelete: false,
+          allowStockAdjustment: false
+        };
+      } else if (role === 'manager') {
+        return {
+          pos: true, dashboard: true, inventory: true, grn: true, customers: true,
+          credit: true, suppliers: true, expenses: true, shifts: true, reports: true,
+          settings: false, users: false, allowCreditEdit: false, allowCreditDelete: false,
+          allowPriceEdit: false, allowDiscount: true, allowReturns: true, allowDelete: false,
+          allowStockAdjustment: false
+        };
+      } else {
+        return {
+          dashboard: true, pos: true, inventory: true, grn: true, customers: true,
+          credit: true, suppliers: true, expenses: true, shifts: true, reports: true,
+          settings: true, users: true, allowCreditEdit: true, allowCreditDelete: true,
+          allowPriceEdit: true, allowDiscount: true, allowReturns: true, allowDelete: true,
+          allowStockAdjustment: true
+        };
+      }
+    }
+
     function performUILogin(user) {
       // 1. Store session
       try { sessionStorage.setItem('lankapos_user', JSON.stringify(user)); } catch(e){}
@@ -685,14 +713,8 @@ input[type=number] {
       // 2. Set user on AuthManager if loaded
       if (window.AuthManager) {
         window.AuthManager.currentUser = Object.assign({
-          id: 1, active: 1, pin: user.pin,
-          permissions: {
-            dashboard:true, pos:true, inventory:true, grn:true, customers:true,
-            credit:true, suppliers:true, expenses:true, shifts:true, reports:true,
-            settings:true, users:true, allowCreditEdit:true, allowCreditDelete:true,
-            allowPriceEdit:true, allowDiscount:true, allowReturns:true, allowDelete:true,
-            allowStockAdjustment:true
-          }
+          id: user.id || 1, active: 1, pin: user.pin,
+          permissions: user.permissions || getRoleDefaultPermissions(user.role)
         }, user);
         try { window.AuthManager.updateUI(); } catch(e){}
       }
@@ -753,14 +775,8 @@ input[type=number] {
         if (pInput) pInput.value = '';
         // Set on AuthManager if ready
         if (window.AuthManager) window.AuthManager.currentUser = Object.assign({
-          id: 1, active: 1, pin: instantUser.pin,
-          permissions: {
-            dashboard:true, pos:true, inventory:true, grn:true, customers:true,
-            credit:true, suppliers:true, expenses:true, shifts:true, reports:true,
-            settings:true, users:true, allowCreditEdit:true, allowCreditDelete:true,
-            allowPriceEdit:true, allowDiscount:true, allowReturns:true, allowDelete:true,
-            allowStockAdjustment:true
-          }
+          id: instantUser.id || 1, active: 1, pin: instantUser.pin,
+          permissions: instantUser.permissions || getRoleDefaultPermissions(instantUser.role)
         }, instantUser);
         performUILogin(instantUser);
         return false;
@@ -11561,11 +11577,60 @@ const DashboardManager = {
       }
     }
 
-    // 8. Render Staff Performance Breakdown Table (When viewing All Staff or for Admin)
-    this.renderStaffBreakdown(allUsers, dateSalesAll, dateReturnsAll, dateCreditPaymentsAll);
+    // Role-based visibility enforcement
+    const isCashier = AuthManager.currentUser && AuthManager.currentUser.role === 'cashier';
+    const isManagerOrAdmin = AuthManager.currentUser && (AuthManager.currentUser.role === 'admin' || AuthManager.currentUser.role === 'manager');
 
-    // 9. Render Inventory Alerts Panel
-    this.renderInventoryAlerts(allProducts, now, in30Days);
+    // 1. Executive Strip (Profit & Valuation): Hide completely for Cashiers
+    const execStrip = document.getElementById('dashExecutiveStrip');
+    if (execStrip) {
+      if (isCashier) {
+        execStrip.classList.add('hidden');
+      } else {
+        execStrip.classList.remove('hidden');
+      }
+    }
+
+    // 2. Staff filter & breakdown section: Hide for Cashiers
+    const staffFilterContainer = document.getElementById('dashStaffFilterContainer');
+    if (staffFilterContainer) {
+      if (isCashier) staffFilterContainer.classList.add('hidden');
+      else staffFilterContainer.classList.remove('hidden');
+    }
+
+    // 3. Update Header Title & Subtitle based on Role
+    const dashHeaderTitle = document.getElementById('dashHeaderTitle');
+    const dashHeaderSubtitle = document.getElementById('dashHeaderSubtitle');
+    if (dashHeaderTitle) {
+      if (isCashier) {
+        dashHeaderTitle.innerHTML = `<span>Cashier Daily Summary (මුදල් අයකැමි දෛනික සාරාංශය)</span> <span id="dashActiveStaffBadge" class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800">${AuthManager.currentUser.fullName || AuthManager.currentUser.username}</span>`;
+      } else {
+        dashHeaderTitle.innerHTML = `<span>Executive & Management Dashboard</span> <span id="dashActiveStaffBadge" class="px-2 py-0.5 rounded text-[10px] font-bold bg-sky-950 text-sky-300 border border-sky-800">ALL STAFF</span>`;
+      }
+    }
+    if (dashHeaderSubtitle) {
+      if (isCashier) {
+        dashHeaderSubtitle.textContent = 'අද දවසේ විකුණුම් (Day Sales), බිල්පත් ගණන (Day Bills), සහ Cash Drawer මුදල් සාරාංශය';
+      } else {
+        dashHeaderSubtitle.textContent = 'සම්පූර්ණ පද්ධතියේ දෛනික විකුණුම්, ශුද්ධ ලාභය, ආපසු ලැබීම් සහ කාර්යමණ්ඩල වාර්තා';
+      }
+    }
+
+    // 8. Render Staff Performance Breakdown Table (When viewing All Staff or for Admin)
+    if (!isCashier) {
+      this.renderStaffBreakdown(allUsers, dateSalesAll, dateReturnsAll, dateCreditPaymentsAll);
+    } else {
+      const section = document.getElementById('dashStaffBreakdownSection');
+      if (section) section.classList.add('hidden');
+    }
+
+    // 9. Render Inventory Alerts Panel (Managers & Admins only)
+    if (!isCashier) {
+      this.renderInventoryAlerts(allProducts, now, in30Days);
+    } else {
+      const alerts = document.getElementById('dashAlertsContainer');
+      if (alerts) alerts.classList.add('hidden');
+    }
 
     // 10. Render Charts (Safe & Protected)
     this.renderCharts(targetAllSales, allSaleItems, dateExpenses);
