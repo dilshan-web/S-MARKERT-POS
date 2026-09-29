@@ -1021,7 +1021,7 @@ input[type=number] {
           </div>
 
           <!-- 4 Operational Metrics (Low Stock, Expiry, Customer Credit, Supplier Payables) -->
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div id="dashOperationalCardsRow" class="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div onclick="App.switchTab('inventory'); InventoryManager.setFilter('low');" class="p-3.5 bg-slate-900 border border-slate-800 hover:border-amber-500/50 rounded-2xl cursor-pointer transition">
               <div class="text-[11px] text-slate-400">⚠️ Low Stock Items</div>
               <div id="dashLowStockCount" class="text-lg font-black text-amber-400 font-mono mt-1">0</div>
@@ -1947,20 +1947,20 @@ input[type=number] {
     </div>
 
     <!-- Mobile Bottom Navigation Bar (Visible only on screens < 768px) -->
-    <nav class="mobile-bottom-nav flex items-center justify-around px-2 select-none">
+    <nav class="mobile-bottom-nav flex items-center justify-around px-1 select-none">
       <button onclick="App.switchTab('pos')" data-tab="pos" class="mobile-nav-btn flex-1 py-1 flex flex-col items-center justify-center text-sky-400 font-bold transition">
         <svg class="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
         <span class="text-[10px]" data-i18n="posTerminal">POS</span>
       </button>
-      <button onclick="App.switchTab('dashboard')" data-tab="dashboard" data-permission="dashboard" class="mobile-nav-btn flex-1 py-1 flex flex-col items-center justify-center text-slate-400 hover:text-slate-200 transition">
+      <button onclick="App.switchTab('dashboard')" data-tab="dashboard" class="mobile-nav-btn flex-1 py-1 flex flex-col items-center justify-center text-slate-400 hover:text-slate-200 transition">
         <svg class="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
         <span class="text-[10px]" data-i18n="dashboard">Dashboard</span>
       </button>
-      <button onclick="App.switchTab('inventory')" data-tab="inventory" data-permission="inventory" class="mobile-nav-btn flex-1 py-1 flex flex-col items-center justify-center text-slate-400 hover:text-slate-200 transition">
-        <svg class="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
-        <span class="text-[10px]" data-i18n="inventory">Stock</span>
+      <button onclick="App.switchTab('shifts')" data-tab="shifts" class="mobile-nav-btn flex-1 py-1 flex flex-col items-center justify-center text-slate-400 hover:text-slate-200 transition">
+        <svg class="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        <span class="text-[10px]" data-i18n="shifts">Shifts</span>
       </button>
-      <button onclick="App.switchTab('credit')" data-tab="credit" data-permission="credit" class="mobile-nav-btn flex-1 py-1 flex flex-col items-center justify-center text-slate-400 hover:text-slate-200 transition">
+      <button onclick="App.switchTab('credit')" data-tab="credit" class="mobile-nav-btn flex-1 py-1 flex flex-col items-center justify-center text-slate-400 hover:text-slate-200 transition">
         <svg class="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>
         <span class="text-[10px]">Credit</span>
       </button>
@@ -4807,6 +4807,11 @@ const AuthManager = {
     if (!this.currentUser) return true; // Fail open if no active restriction
     if (this.currentUser.role === 'admin') return true;
 
+    // Core universal modules always accessible to every authenticated staff member
+    if (['pos', 'dashboard', 'shifts', 'credit', 'customers'].includes(permKey)) {
+      return true;
+    }
+
     // Check user-specific permissions if configured
     if (this.currentUser.permissions && this.currentUser.permissions[permKey] !== undefined) {
       return !!this.currentUser.permissions[permKey];
@@ -7313,36 +7318,36 @@ const POSManager = {
 
       return `
         <div onclick="POSManager.addProductById(${p.id})"
-             class="group relative bg-slate-800/80 hover:bg-slate-750 border border-slate-700/80 hover:border-sky-500 rounded-2xl p-3 flex flex-col justify-between cursor-pointer transition-all duration-150 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-sky-950/40 select-none">
+             class="group relative bg-slate-800/90 hover:bg-slate-750 border border-slate-700/80 hover:border-sky-500 rounded-2xl p-2.5 sm:p-3 flex flex-col justify-between cursor-pointer transition-all duration-150 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-sky-950/40 select-none">
           <div>
             <div class="flex items-start justify-between gap-1 mb-1">
-              <span class="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-slate-700/80 text-slate-300">
+              <span class="text-[9px] sm:text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-slate-700/80 text-slate-300">
                 ${p.unit || 'pcs'}
               </span>
-              <span class="text-[10px] font-mono px-1.5 py-0.5 rounded font-bold ${
+              <span class="text-[9px] sm:text-[10px] font-mono px-1.5 py-0.5 rounded font-bold ${
                 isOut ? 'bg-rose-900/80 text-rose-300 border border-rose-700' :
                 isLow ? 'bg-amber-900/80 text-amber-300 border border-amber-700' :
                 'bg-emerald-950/80 text-emerald-300'
               }">
-                ${isOut ? 'Out of Stock' : `${p.currentStock} ${p.unit}`}
+                ${isOut ? 'Out' : `${p.currentStock} ${p.unit}`}
               </span>
             </div>
-            <h4 class="font-bold text-slate-100 text-xs leading-snug group-hover:text-sky-300 transition line-clamp-2">
+            <h4 class="font-bold text-slate-100 text-xs leading-tight group-hover:text-sky-300 transition line-clamp-2">
               ${p.name}
-              ${p.nameSi && p.nameSi !== p.name ? `<span class="text-[11px] text-sky-400 font-normal block mt-0.5 font-sans">(${p.nameSi})</span>` : ''}
+              ${p.nameSi && p.nameSi !== p.name ? `<span class="text-[10px] text-sky-400 font-normal block mt-0.5 font-sans truncate">(${p.nameSi})</span>` : ''}
             </h4>
-            <div class="text-[10px] text-slate-400 font-mono mt-0.5">${p.sku}</div>
+            <div class="text-[9px] text-slate-400 font-mono mt-0.5 truncate">${p.sku}</div>
           </div>
           
           <!-- Dual Price Box (Retail vs Wholesale) -->
-          <div class="mt-2.5 pt-2 border-t border-slate-700/60 flex items-center justify-between text-[11px] font-mono">
+          <div class="mt-2 pt-1.5 border-t border-slate-700/60 flex items-center justify-between text-[11px] font-mono">
             <div>
-              <span class="text-[10px] text-slate-400 block">${window.I18n ? I18n.t('retailTag') : 'Retail'}</span>
-              <span class="font-bold text-sky-400">${formatLKR(p.sellingPrice)}</span>
+              <span class="text-[9px] text-slate-400 block">${window.I18n ? I18n.t('retailTag') : 'Retail'}</span>
+              <span class="font-bold text-sky-400 text-xs">${formatLKR(p.sellingPrice)}</span>
             </div>
             <div class="text-right">
-              <span class="text-[10px] text-amber-400/80 block">${window.I18n ? I18n.t('wholesaleTag') : 'Wholesale'}</span>
-              <span class="font-bold text-amber-300">${formatLKR(wsPrice)}</span>
+              <span class="text-[9px] text-amber-400/80 block">${window.I18n ? I18n.t('wholesaleTag') : 'WS'}</span>
+              <span class="font-bold text-amber-300 text-xs">${formatLKR(wsPrice)}</span>
             </div>
           </div>
         </div>
@@ -11476,7 +11481,13 @@ const DashboardManager = {
       if (section) section.classList.add('hidden');
     }
 
-    // 9. Render Inventory Alerts Panel (Managers & Admins only)
+    // 9. Render Inventory Alerts Panel & Operational Cards (Managers & Admins only)
+    const operationalCardsRow = document.getElementById('dashOperationalCardsRow');
+    if (operationalCardsRow) {
+      if (isCashier) operationalCardsRow.classList.add('hidden');
+      else operationalCardsRow.classList.remove('hidden');
+    }
+
     if (!isCashier) {
       this.renderInventoryAlerts(allProducts, now, in30Days);
     } else {
@@ -11723,32 +11734,38 @@ const DashboardManager = {
           profitData.push(Math.max(0, dayRev - cogs - dayExp));
         }
 
+        const trendDatasets = [
+          {
+            label: I18n.currentLang === 'si' ? 'විකුණුම් (Sales)' : 'Sales Revenue',
+            data: salesData,
+            borderColor: '#38bdf8',
+            backgroundColor: 'rgba(56, 189, 248, 0.15)',
+            borderWidth: 2.5,
+            tension: 0.35,
+            fill: true,
+            pointBackgroundColor: '#38bdf8'
+          }
+        ];
+
+        const isCashierRole = AuthManager.currentUser && AuthManager.currentUser.role === 'cashier';
+        if (!isCashierRole) {
+          trendDatasets.push({
+            label: I18n.currentLang === 'si' ? 'ශුද්ධ ලාභය (Profit)' : 'Net Profit',
+            data: profitData,
+            borderColor: '#10b981',
+            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+            borderWidth: 2.5,
+            tension: 0.35,
+            fill: true,
+            pointBackgroundColor: '#10b981'
+          });
+        }
+
         this.charts.trend = new Chart(trendCtx, {
           type: 'line',
           data: {
             labels,
-            datasets: [
-              {
-                label: I18n.currentLang === 'si' ? 'විකුණුම් (Sales)' : 'Sales Revenue',
-                data: salesData,
-                borderColor: '#38bdf8',
-                backgroundColor: 'rgba(56, 189, 248, 0.15)',
-                borderWidth: 2.5,
-                tension: 0.35,
-                fill: true,
-                pointBackgroundColor: '#38bdf8'
-              },
-              {
-                label: I18n.currentLang === 'si' ? 'ශුද්ධ ලාභය (Profit)' : 'Net Profit',
-                data: profitData,
-                borderColor: '#10b981',
-                backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                borderWidth: 2.5,
-                tension: 0.35,
-                fill: true,
-                pointBackgroundColor: '#10b981'
-              }
-            ]
+            datasets: trendDatasets
           },
           options: {
             responsive: true,
@@ -12292,8 +12309,9 @@ const App = {
 
   registerServiceWorker() {
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js')
+      navigator.serviceWorker.register('./sw.js?v=3.1.0')
         .then((reg) => {
+          reg.update();
           console.log('[ServiceWorker] Registered with scope:', reg.scope);
         })
         .catch((err) => {
