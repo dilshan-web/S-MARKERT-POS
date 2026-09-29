@@ -17,7 +17,7 @@
     if ('caches' in window) {
       caches.keys().then(function(names) {
         for (var n of names) {
-          if (n !== 'lankapos-v2.0.0-live') {
+          if (n !== 'lankapos-v3.0.0-live') {
             caches.delete(n);
           }
         }

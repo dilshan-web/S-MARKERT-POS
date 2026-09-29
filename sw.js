@@ -1,25 +1,9 @@
-const CACHE_NAME = 'lankapos-v2.0.0-live';
+const CACHE_NAME = 'lankapos-v3.0.0-live';
 
 const STATIC_ASSETS = [
   './',
   './index.html',
-  './manifest.json',
-  './styles.css',
-  './js/db.js',
-  './js/audio.js',
-  './js/auth.js',
-  './js/i18n.js',
-  './js/pos.js',
-  './js/inventory.js',
-  './js/grn.js',
-  './js/customers.js',
-  './js/suppliers.js',
-  './js/expenses.js',
-  './js/shifts.js',
-  './js/dashboard.js',
-  './js/reports.js',
-  './js/backup.js',
-  './js/app.js'
+  './manifest.json'
 ];
 
 self.addEventListener('install', (event) => {
