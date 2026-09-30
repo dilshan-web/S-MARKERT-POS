@@ -11994,9 +11994,9 @@ const DashboardManager = {
 
   async init() {
     const currentUser = AuthManager.currentUser;
-    // Always default Admin & Manager to 'all' so all supermarket terminals/cashiers are shown
+    // Always default Admin & Manager to 'all' on first load, or maintain current selection
     if (currentUser && (currentUser.role === 'admin' || currentUser.role === 'manager')) {
-      this.selectedStaffId = 'all';
+      if (!this.selectedStaffId) this.selectedStaffId = 'all';
     } else if (currentUser && currentUser.role === 'cashier') {
       this.selectedStaffId = String(currentUser.id);
     } else {
@@ -12083,7 +12083,7 @@ const DashboardManager = {
   },
 
   onStaffFilterChange(val) {
-    this.selectedStaffId = val;
+    this.selectedStaffId = val || 'all';
     this.renderDashboard();
   },
 
@@ -12093,6 +12093,13 @@ const DashboardManager = {
     if (select) select.value = String(id);
     this.renderDashboard();
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  },
+
+  resetStaffFilter() {
+    this.selectedStaffId = 'all';
+    const select = document.getElementById('dashStaffFilterSelect');
+    if (select) select.value = 'all';
+    this.renderDashboard();
   },
 
   async renderDashboard() {
@@ -12131,22 +12138,40 @@ const DashboardManager = {
 
     if (this.selectedStaffId && this.selectedStaffId !== 'all') {
       const targetId = parseInt(this.selectedStaffId);
-      activeStaffUser = allUsers.find(u => u.id === targetId);
+      activeStaffUser = allUsers.find(u => u.id === targetId || String(u.id) === String(this.selectedStaffId));
 
-      targetSales = dateSalesAll.filter(s => String(s.cashierId) === String(targetId) || (activeStaffUser && (s.cashierName === activeStaffUser.fullName || s.cashierName === activeStaffUser.username)));
-      targetReturns = dateReturnsAll.filter(r => String(r.cashierId) === String(targetId));
-      targetCreditPayments = dateCreditPaymentsAll.filter(p => String(p.cashierId) === String(targetId));
-      targetAllSales = allSales.filter(s => String(s.cashierId) === String(targetId) || (activeStaffUser && (s.cashierName === activeStaffUser.fullName || s.cashierName === activeStaffUser.username)));
+      const isStaffMatch = (record) => {
+        if (!record) return false;
+        // Match by cashierId / userId
+        if (record.cashierId !== undefined && (String(record.cashierId) === String(this.selectedStaffId) || Number(record.cashierId) === targetId)) {
+          return true;
+        }
+        if (record.userId !== undefined && (String(record.userId) === String(this.selectedStaffId) || Number(record.userId) === targetId)) {
+          return true;
+        }
+        // Match by cashierName / username
+        if (activeStaffUser) {
+          if (record.cashierName && (record.cashierName === activeStaffUser.fullName || record.cashierName === activeStaffUser.username)) return true;
+          if (record.cashierUsername && record.cashierUsername === activeStaffUser.username) return true;
+          if (record.userName && (record.userName === activeStaffUser.fullName || record.userName === activeStaffUser.username)) return true;
+        }
+        return false;
+      };
+
+      targetSales = dateSalesAll.filter(isStaffMatch);
+      targetReturns = dateReturnsAll.filter(isStaffMatch);
+      targetCreditPayments = dateCreditPaymentsAll.filter(isStaffMatch);
+      targetAllSales = allSales.filter(isStaffMatch);
     }
 
     // 3. Update Header Banner info
     const badgeEl = document.getElementById('dashActiveStaffBadge');
     if (badgeEl) {
       if (activeStaffUser) {
-        badgeEl.textContent = `${activeStaffUser.fullName || activeStaffUser.username} (${activeStaffUser.role.toUpperCase()}) - ${activeDateStr}`;
-        badgeEl.className = 'px-2 py-0.5 rounded text-[10px] font-bold bg-amber-950 text-amber-300 border border-amber-800';
+        badgeEl.innerHTML = `<span>👤 ${activeStaffUser.fullName || activeStaffUser.username} (${activeStaffUser.role.toUpperCase()}) &bull; ${activeDateStr}</span> <button onclick="DashboardManager.resetStaffFilter()" class="ml-1.5 px-1.5 py-0.5 bg-amber-900 hover:bg-amber-800 text-amber-100 rounded text-[9px] font-bold transition">Show All &times;</button>`;
+        badgeEl.className = 'px-2 py-0.5 rounded text-[11px] font-bold bg-amber-950 text-amber-300 border border-amber-800 flex items-center gap-1';
       } else {
-        badgeEl.textContent = activeDateStr === todayStr ? `ALL STORE PERFORMANCE (TODAY)` : `ALL STORE PERFORMANCE (${activeDateStr})`;
+        badgeEl.textContent = activeDateStr === todayStr ? `🌐 ALL STORE PERFORMANCE (TODAY)` : `🌐 ALL STORE PERFORMANCE (${activeDateStr})`;
         badgeEl.className = 'px-2 py-0.5 rounded text-[10px] font-bold bg-sky-950 text-sky-300 border border-sky-800';
       }
     }
@@ -12279,85 +12304,42 @@ const DashboardManager = {
       }
     }
 
-    // Role-based visibility enforcement
-    const isCashier = AuthManager.currentUser && AuthManager.currentUser.role === 'cashier';
-    const isManagerOrAdmin = AuthManager.currentUser && (AuthManager.currentUser.role === 'admin' || AuthManager.currentUser.role === 'manager');
+    // 8. Render Staff Performance Breakdown Table
+    this.renderStaffBreakdown(allUsers, dateSalesAll, dateReturnsAll, dateCreditPaymentsAll);
 
-    // 1. Executive Strip (Profit & Valuation): Hide ONLY for Cashiers; ALWAYS show for Admin and Manager (even when filtering individual cashier!)
-    const execStrip = document.getElementById('dashExecutiveStrip');
-    if (execStrip) {
-      if (isCashier) {
-        execStrip.classList.add('hidden');
-      } else {
-        execStrip.classList.remove('hidden');
-      }
-    }
-
-    // 2. Staff filter & breakdown section: Hide for Cashiers
-    const staffFilterContainer = document.getElementById('dashStaffFilterContainer');
-    if (staffFilterContainer) {
-      if (isCashier) staffFilterContainer.classList.add('hidden');
-      else staffFilterContainer.classList.remove('hidden');
-    }
-
-    // 3. Update Header Title & Subtitle based on Role
-    const dashHeaderTitle = document.getElementById('dashHeaderTitle');
-    const dashHeaderSubtitle = document.getElementById('dashHeaderSubtitle');
-    if (dashHeaderTitle) {
-      if (isCashier) {
-        dashHeaderTitle.innerHTML = `<span>Cashier Daily Summary (මුදල් අයකැමි දෛනික සාරාංශය)</span> <span id="dashActiveStaffBadge" class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800">${AuthManager.currentUser.fullName || AuthManager.currentUser.username}</span>`;
-      } else {
-        const activeLabel = activeStaffUser ? `${(activeStaffUser.fullName || activeStaffUser.username).toUpperCase()} (CASHIER PERFORMANCE)` : 'ALL STAFF';
-        dashHeaderTitle.innerHTML = `<span>Executive & Management Dashboard</span> <span id="dashActiveStaffBadge" class="px-2 py-0.5 rounded text-[10px] font-bold bg-sky-950 text-sky-300 border border-sky-800">${activeLabel}</span>`;
-      }
-    }
-    if (dashHeaderSubtitle) {
-      if (isCashier) {
-        dashHeaderSubtitle.textContent = 'අද දවසේ විකුණුම් (Day Sales), බිල්පත් ගණන (Day Bills), සහ Cash Drawer මුදල් සාරාංශය';
-      } else if (activeStaffUser) {
-        dashHeaderSubtitle.textContent = `${activeStaffUser.fullName || activeStaffUser.username} විසින් අද දින සිදුකළ විකුණුම්, ශුද්ධ ලාභය (Net Profit), ලාච්චුවේ මුදල් සහ බිල්පත් වාර්තාව`;
-      } else {
-        dashHeaderSubtitle.textContent = 'සම්පූර්ණ පද්ධතියේ දෛනික විකුණුම්, ශුද්ධ ලාභය, ආපසු ලැබීම් සහ කාර්යමණ්ඩල වාර්තා';
-      }
-    }
-
-    // 8. Render Staff Performance Breakdown Table (When viewing All Staff or for Admin)
-    if (!isCashier) {
-      this.renderStaffBreakdown(allUsers, dateSalesAll, dateReturnsAll, dateCreditPaymentsAll, allSaleItems);
-    } else {
-      const section = document.getElementById('dashStaffBreakdownSection');
-      if (section) section.classList.add('hidden');
-    }
-
-    // 9. Render Inventory Alerts Panel & Operational Cards (Managers & Admins only)
-    const operationalCardsRow = document.getElementById('dashOperationalCardsRow');
-    if (operationalCardsRow) {
-      if (isCashier) operationalCardsRow.classList.add('hidden');
-      else operationalCardsRow.classList.remove('hidden');
-    }
-
-    if (!isCashier) {
-      this.renderInventoryAlerts(allProducts, now, in30Days);
-    } else {
-      const alerts = document.getElementById('dashAlertsContainer');
-      if (alerts) alerts.classList.add('hidden');
-    }
+    // 9. Render Inventory Alerts Panel
+    this.renderInventoryAlerts(allProducts, now, in30Days);
 
     // 10. Render Charts (Safe & Protected)
-    this.renderCharts(targetAllSales, allSaleItems, dateExpenses);
+    this.renderCharts(targetAllSales, targetSales, allSaleItems, dateExpenses);
 
     // 11. Render Recent Transactions
     this.renderRecentTransactions(targetAllSales);
   },
 
-  renderStaffBreakdown(users, dateSales, dateReturns, dateCreditPayments, allSaleItems = []) {
+  renderStaffBreakdown(users, dateSales, dateReturns, dateCreditPayments) {
     const tbody = document.getElementById('dashStaffBreakdownTableBody');
     const section = document.getElementById('dashStaffBreakdownSection');
     if (!tbody || !section) return;
 
     if (this.selectedStaffId !== 'all') {
-      // Hide breakdown table if filtering by a single staff member to keep UI compact
-      section.classList.add('hidden');
+      const activeUser = users.find(u => String(u.id) === String(this.selectedStaffId));
+      section.classList.remove('hidden');
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="7" class="p-4 text-center bg-slate-950/60">
+            <div class="text-xs text-amber-300 font-semibold mb-1">
+              🔎 Filtered by Staff: <strong>${activeUser ? (activeUser.fullName || activeUser.username) : 'Selected Staff'}</strong>
+            </div>
+            <div class="text-[11px] text-slate-400 mb-2">
+              Showing sales, profit, bills, returns and credit only for this staff member.
+            </div>
+            <button onclick="DashboardManager.resetStaffFilter()" class="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-bold transition inline-flex items-center gap-1.5 shadow-md">
+              🌐 View All Staff Breakdown (සියලුම දෙනාගේ වාර්තාව)
+            </button>
+          </td>
+        </tr>
+      `;
       return;
     }
 
@@ -12365,22 +12347,12 @@ const DashboardManager = {
 
     tbody.innerHTML = users.map(u => {
       const staffSales = dateSales.filter(s => String(s.cashierId) === String(u.id) || s.cashierName === u.fullName || s.cashierName === u.username);
-      const staffReturns = dateReturns.filter(r => String(r.cashierId) === String(u.id));
-      const staffCredit = dateCreditPayments.filter(p => String(p.cashierId) === String(u.id));
+      const staffReturns = dateReturns.filter(r => String(r.cashierId) === String(u.id) || r.cashierName === u.fullName || r.cashierName === u.username);
+      const staffCredit = dateCreditPayments.filter(p => String(p.cashierId) === String(u.id) || p.cashierName === u.fullName || p.cashierName === u.username);
 
       const salesTotal = staffSales.reduce((acc, s) => acc + (Number(s.grandTotal) || 0), 0);
       const billsCount = staffSales.length;
       
-      const staffSaleIds = new Set(staffSales.map(s => s.id));
-      let staffCOGS = 0;
-      if (allSaleItems && allSaleItems.length > 0) {
-        allSaleItems.filter(i => staffSaleIds.has(i.saleId)).forEach(i => {
-          staffCOGS += (Number(i.costPrice) || 0) * (Number(i.qty) || 0);
-        });
-      }
-      const staffProfit = salesTotal - staffCOGS;
-      const staffMargin = salesTotal > 0 ? ((staffProfit / salesTotal) * 100).toFixed(1) : 0;
-
       let cashTotal = 0;
       staffSales.forEach(s => {
         if (s.paymentMethod === 'cash') cashTotal += Number(s.grandTotal) || 0;
@@ -12402,7 +12374,7 @@ const DashboardManager = {
                 u.role === 'admin' ? 'bg-purple-950 text-purple-300 border border-purple-800' :
                 u.role === 'manager' ? 'bg-blue-950 text-blue-300 border border-blue-800' :
                 'bg-emerald-950 text-emerald-300 border border-emerald-800'
-              }">${u.role.toUpperCase()}</span>
+              }">${(u.role || 'cashier').toUpperCase()}</span>
             </div>
             <div class="text-[10px] text-slate-400 font-mono">@${u.username}</div>
           </td>
@@ -12411,10 +12383,6 @@ const DashboardManager = {
           </td>
           <td class="p-3 text-right font-mono font-black ${salesTotal > 0 ? 'text-sky-400' : 'text-slate-500'}">
             ${formatLKR(salesTotal)}
-          </td>
-          <td class="p-3 text-right font-mono font-bold ${staffProfit > 0 ? 'text-emerald-400' : 'text-slate-500'}">
-            ${formatLKR(staffProfit)}
-            <div class="text-[10px] text-emerald-300 font-sans font-normal">${staffMargin}% Margin</div>
           </td>
           <td class="p-3 text-right font-mono font-bold ${netCashInDrawer > 0 ? 'text-emerald-400' : 'text-slate-500'}">
             ${formatLKR(netCashInDrawer)}
@@ -12563,7 +12531,7 @@ const DashboardManager = {
     this.renderDashboard();
   },
 
-  renderCharts(sales, saleItems, expenses) {
+  renderCharts(allSales, daySales, saleItems, expenses) {
     if (!window.Chart) return;
 
     try {
@@ -12583,51 +12551,45 @@ const DashboardManager = {
           const dStr = this.getDateStr(d);
           labels.push(d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }));
 
-          const daySales = sales.filter(s => this.getDateStr(s.timestamp || s.date) === dStr);
-          const dayRev = daySales.reduce((acc, s) => acc + (Number(s.grandTotal) || 0), 0);
+          const currentDaySales = allSales.filter(s => this.getDateStr(s.timestamp || s.date) === dStr);
+          const dayRev = currentDaySales.reduce((acc, s) => acc + (Number(s.grandTotal) || 0), 0);
           salesData.push(dayRev);
 
-          const daySaleIds = new Set(daySales.map(s => s.id));
+          const daySaleIds = new Set(currentDaySales.map(s => s.id));
           let cogs = 0;
           saleItems.filter(i => daySaleIds.has(i.saleId)).forEach(i => {
             cogs += (Number(i.costPrice) || 0) * (Number(i.qty) || 0);
           });
-          const dayExp = expenses.filter(e => this.getDateStr(e.date || e.timestamp) === dStr).reduce((acc, e) => acc + (Number(e.amount) || 0), 0);
+          const dayExp = (this.selectedStaffId === 'all') ? expenses.filter(e => this.getDateStr(e.date || e.timestamp) === dStr).reduce((acc, e) => acc + (Number(e.amount) || 0), 0) : 0;
           profitData.push(Math.max(0, dayRev - cogs - dayExp));
-        }
-
-        const trendDatasets = [
-          {
-            label: I18n.currentLang === 'si' ? 'විකුණුම් (Sales)' : 'Sales Revenue',
-            data: salesData,
-            borderColor: '#38bdf8',
-            backgroundColor: 'rgba(56, 189, 248, 0.15)',
-            borderWidth: 2.5,
-            tension: 0.35,
-            fill: true,
-            pointBackgroundColor: '#38bdf8'
-          }
-        ];
-
-        const isCashierRole = AuthManager.currentUser && AuthManager.currentUser.role === 'cashier';
-        if (!isCashierRole) {
-          trendDatasets.push({
-            label: I18n.currentLang === 'si' ? 'ශුද්ධ ලාභය (Profit)' : 'Net Profit',
-            data: profitData,
-            borderColor: '#10b981',
-            backgroundColor: 'rgba(16, 185, 129, 0.1)',
-            borderWidth: 2.5,
-            tension: 0.35,
-            fill: true,
-            pointBackgroundColor: '#10b981'
-          });
         }
 
         this.charts.trend = new Chart(trendCtx, {
           type: 'line',
           data: {
             labels,
-            datasets: trendDatasets
+            datasets: [
+              {
+                label: I18n.currentLang === 'si' ? 'විකුණුම් (Sales)' : 'Sales Revenue',
+                data: salesData,
+                borderColor: '#38bdf8',
+                backgroundColor: 'rgba(56, 189, 248, 0.15)',
+                borderWidth: 2.5,
+                tension: 0.35,
+                fill: true,
+                pointBackgroundColor: '#38bdf8'
+              },
+              {
+                label: I18n.currentLang === 'si' ? 'ශුද්ධ ලාභය (Profit)' : 'Net Profit',
+                data: profitData,
+                borderColor: '#10b981',
+                backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                borderWidth: 2.5,
+                tension: 0.35,
+                fill: true,
+                pointBackgroundColor: '#10b981'
+              }
+            ]
           },
           options: {
             responsive: true,
@@ -12653,7 +12615,8 @@ const DashboardManager = {
         }
 
         const payMap = { cash: 0, card: 0, bank: 0, credit: 0 };
-        sales.forEach(s => {
+        const chartSales = (daySales && daySales.length > 0) ? daySales : allSales;
+        chartSales.forEach(s => {
           const method = s.paymentMethod || 'cash';
           if (method === 'split') {
             payMap.cash += Number(s.paidCash) || 0;
