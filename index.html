@@ -17,7 +17,7 @@
     if ('caches' in window) {
       caches.keys().then(function(names) {
         for (var n of names) {
-          if (n !== 'lankapos-v3.4.0-offline') {
+          if (n !== 'lankapos-v3.5.0-offline-pwa') {
             caches.delete(n);
           }
         }
@@ -4059,7 +4059,6 @@ class FirestoreDB {
       return false;
     }
   }
-}
 }
 
 const db = new FirestoreDB();
@@ -13172,7 +13171,7 @@ const App = {
 
   registerServiceWorker() {
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js?v=3.2.0')
+      navigator.serviceWorker.register('./sw.js?v=3.5.0')
         .then((reg) => {
           reg.update();
           console.log('[ServiceWorker] Registered with scope:', reg.scope);
