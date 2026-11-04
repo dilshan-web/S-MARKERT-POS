@@ -12,9 +12,9 @@ const DashboardManager = {
 
   async init() {
     const currentUser = AuthManager.currentUser;
-    // Always default Admin & Manager to 'all' so all supermarket terminals/cashiers are shown
+    // Always default Admin & Manager to 'all' on first load, or maintain current selection
     if (currentUser && (currentUser.role === 'admin' || currentUser.role === 'manager')) {
-      this.selectedStaffId = 'all';
+      if (!this.selectedStaffId) this.selectedStaffId = 'all';
     } else if (currentUser && currentUser.role === 'cashier') {
       this.selectedStaffId = String(currentUser.id);
     } else {
@@ -101,7 +101,7 @@ const DashboardManager = {
   },
 
   onStaffFilterChange(val) {
-    this.selectedStaffId = val;
+    this.selectedStaffId = val || 'all';
     this.renderDashboard();
   },
 
@@ -111,6 +111,13 @@ const DashboardManager = {
     if (select) select.value = String(id);
     this.renderDashboard();
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  },
+
+  resetStaffFilter() {
+    this.selectedStaffId = 'all';
+    const select = document.getElementById('dashStaffFilterSelect');
+    if (select) select.value = 'all';
+    this.renderDashboard();
   },
 
   async renderDashboard() {
@@ -149,22 +156,40 @@ const DashboardManager = {
 
     if (this.selectedStaffId && this.selectedStaffId !== 'all') {
       const targetId = parseInt(this.selectedStaffId);
-      activeStaffUser = allUsers.find(u => u.id === targetId);
+      activeStaffUser = allUsers.find(u => u.id === targetId || String(u.id) === String(this.selectedStaffId));
 
-      targetSales = dateSalesAll.filter(s => String(s.cashierId) === String(targetId) || (activeStaffUser && (s.cashierName === activeStaffUser.fullName || s.cashierName === activeStaffUser.username)));
-      targetReturns = dateReturnsAll.filter(r => String(r.cashierId) === String(targetId));
-      targetCreditPayments = dateCreditPaymentsAll.filter(p => String(p.cashierId) === String(targetId));
-      targetAllSales = allSales.filter(s => String(s.cashierId) === String(targetId) || (activeStaffUser && (s.cashierName === activeStaffUser.fullName || s.cashierName === activeStaffUser.username)));
+      const isStaffMatch = (record) => {
+        if (!record) return false;
+        // Match by cashierId / userId
+        if (record.cashierId !== undefined && (String(record.cashierId) === String(this.selectedStaffId) || Number(record.cashierId) === targetId)) {
+          return true;
+        }
+        if (record.userId !== undefined && (String(record.userId) === String(this.selectedStaffId) || Number(record.userId) === targetId)) {
+          return true;
+        }
+        // Match by cashierName / username
+        if (activeStaffUser) {
+          if (record.cashierName && (record.cashierName === activeStaffUser.fullName || record.cashierName === activeStaffUser.username)) return true;
+          if (record.cashierUsername && record.cashierUsername === activeStaffUser.username) return true;
+          if (record.userName && (record.userName === activeStaffUser.fullName || record.userName === activeStaffUser.username)) return true;
+        }
+        return false;
+      };
+
+      targetSales = dateSalesAll.filter(isStaffMatch);
+      targetReturns = dateReturnsAll.filter(isStaffMatch);
+      targetCreditPayments = dateCreditPaymentsAll.filter(isStaffMatch);
+      targetAllSales = allSales.filter(isStaffMatch);
     }
 
     // 3. Update Header Banner info
     const badgeEl = document.getElementById('dashActiveStaffBadge');
     if (badgeEl) {
       if (activeStaffUser) {
-        badgeEl.textContent = `${activeStaffUser.fullName || activeStaffUser.username} (${activeStaffUser.role.toUpperCase()}) - ${activeDateStr}`;
-        badgeEl.className = 'px-2 py-0.5 rounded text-[10px] font-bold bg-amber-950 text-amber-300 border border-amber-800';
+        badgeEl.innerHTML = `<span>👤 ${activeStaffUser.fullName || activeStaffUser.username} (${activeStaffUser.role.toUpperCase()}) &bull; ${activeDateStr}</span> <button onclick="DashboardManager.resetStaffFilter()" class="ml-1.5 px-1.5 py-0.5 bg-amber-900 hover:bg-amber-800 text-amber-100 rounded text-[9px] font-bold transition">Show All &times;</button>`;
+        badgeEl.className = 'px-2 py-0.5 rounded text-[11px] font-bold bg-amber-950 text-amber-300 border border-amber-800 flex items-center gap-1';
       } else {
-        badgeEl.textContent = activeDateStr === todayStr ? `ALL STORE PERFORMANCE (TODAY)` : `ALL STORE PERFORMANCE (${activeDateStr})`;
+        badgeEl.textContent = activeDateStr === todayStr ? `🌐 ALL STORE PERFORMANCE (TODAY)` : `🌐 ALL STORE PERFORMANCE (${activeDateStr})`;
         badgeEl.className = 'px-2 py-0.5 rounded text-[10px] font-bold bg-sky-950 text-sky-300 border border-sky-800';
       }
     }
@@ -297,14 +322,14 @@ const DashboardManager = {
       }
     }
 
-    // 8. Render Staff Performance Breakdown Table (When viewing All Staff or for Admin)
+    // 8. Render Staff Performance Breakdown Table
     this.renderStaffBreakdown(allUsers, dateSalesAll, dateReturnsAll, dateCreditPaymentsAll);
 
     // 9. Render Inventory Alerts Panel
     this.renderInventoryAlerts(allProducts, now, in30Days);
 
     // 10. Render Charts (Safe & Protected)
-    this.renderCharts(targetAllSales, allSaleItems, dateExpenses);
+    this.renderCharts(targetAllSales, targetSales, allSaleItems, dateExpenses);
 
     // 11. Render Recent Transactions
     this.renderRecentTransactions(targetAllSales);
@@ -316,8 +341,23 @@ const DashboardManager = {
     if (!tbody || !section) return;
 
     if (this.selectedStaffId !== 'all') {
-      // Hide breakdown table if filtering by a single staff member to keep UI compact
-      section.classList.add('hidden');
+      const activeUser = users.find(u => String(u.id) === String(this.selectedStaffId));
+      section.classList.remove('hidden');
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="7" class="p-4 text-center bg-slate-950/60">
+            <div class="text-xs text-amber-300 font-semibold mb-1">
+              🔎 Filtered by Staff: <strong>${activeUser ? (activeUser.fullName || activeUser.username) : 'Selected Staff'}</strong>
+            </div>
+            <div class="text-[11px] text-slate-400 mb-2">
+              Showing sales, profit, bills, returns and credit only for this staff member.
+            </div>
+            <button onclick="DashboardManager.resetStaffFilter()" class="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-bold transition inline-flex items-center gap-1.5 shadow-md">
+              🌐 View All Staff Breakdown (සියලුම දෙනාගේ වාර්තාව)
+            </button>
+          </td>
+        </tr>
+      `;
       return;
     }
 
@@ -325,8 +365,8 @@ const DashboardManager = {
 
     tbody.innerHTML = users.map(u => {
       const staffSales = dateSales.filter(s => String(s.cashierId) === String(u.id) || s.cashierName === u.fullName || s.cashierName === u.username);
-      const staffReturns = dateReturns.filter(r => String(r.cashierId) === String(u.id));
-      const staffCredit = dateCreditPayments.filter(p => String(p.cashierId) === String(u.id));
+      const staffReturns = dateReturns.filter(r => String(r.cashierId) === String(u.id) || r.cashierName === u.fullName || r.cashierName === u.username);
+      const staffCredit = dateCreditPayments.filter(p => String(p.cashierId) === String(u.id) || p.cashierName === u.fullName || p.cashierName === u.username);
 
       const salesTotal = staffSales.reduce((acc, s) => acc + (Number(s.grandTotal) || 0), 0);
       const billsCount = staffSales.length;
@@ -352,7 +392,7 @@ const DashboardManager = {
                 u.role === 'admin' ? 'bg-purple-950 text-purple-300 border border-purple-800' :
                 u.role === 'manager' ? 'bg-blue-950 text-blue-300 border border-blue-800' :
                 'bg-emerald-950 text-emerald-300 border border-emerald-800'
-              }">${u.role.toUpperCase()}</span>
+              }">${(u.role || 'cashier').toUpperCase()}</span>
             </div>
             <div class="text-[10px] text-slate-400 font-mono">@${u.username}</div>
           </td>
@@ -509,7 +549,7 @@ const DashboardManager = {
     this.renderDashboard();
   },
 
-  renderCharts(sales, saleItems, expenses) {
+  renderCharts(allSales, daySales, saleItems, expenses) {
     if (!window.Chart) return;
 
     try {
@@ -529,16 +569,16 @@ const DashboardManager = {
           const dStr = this.getDateStr(d);
           labels.push(d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }));
 
-          const daySales = sales.filter(s => this.getDateStr(s.timestamp || s.date) === dStr);
-          const dayRev = daySales.reduce((acc, s) => acc + (Number(s.grandTotal) || 0), 0);
+          const currentDaySales = allSales.filter(s => this.getDateStr(s.timestamp || s.date) === dStr);
+          const dayRev = currentDaySales.reduce((acc, s) => acc + (Number(s.grandTotal) || 0), 0);
           salesData.push(dayRev);
 
-          const daySaleIds = new Set(daySales.map(s => s.id));
+          const daySaleIds = new Set(currentDaySales.map(s => s.id));
           let cogs = 0;
           saleItems.filter(i => daySaleIds.has(i.saleId)).forEach(i => {
             cogs += (Number(i.costPrice) || 0) * (Number(i.qty) || 0);
           });
-          const dayExp = expenses.filter(e => this.getDateStr(e.date || e.timestamp) === dStr).reduce((acc, e) => acc + (Number(e.amount) || 0), 0);
+          const dayExp = (this.selectedStaffId === 'all') ? expenses.filter(e => this.getDateStr(e.date || e.timestamp) === dStr).reduce((acc, e) => acc + (Number(e.amount) || 0), 0) : 0;
           profitData.push(Math.max(0, dayRev - cogs - dayExp));
         }
 
@@ -593,7 +633,8 @@ const DashboardManager = {
         }
 
         const payMap = { cash: 0, card: 0, bank: 0, credit: 0 };
-        sales.forEach(s => {
+        const chartSales = (daySales && daySales.length > 0) ? daySales : allSales;
+        chartSales.forEach(s => {
           const method = s.paymentMethod || 'cash';
           if (method === 'split') {
             payMap.cash += Number(s.paidCash) || 0;

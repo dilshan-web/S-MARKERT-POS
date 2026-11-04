@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Central App Router, Scanner Wedge, Camera Scanner, Hotkeys & PWA Service Worker
  */
 

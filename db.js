@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Google Firebase Firestore Real-Time Database Engine for Supermarket POS
  * Uses Firebase JS SDK v10 (via CDN Modular SDK)
  * Real-time synchronization across all devices (Laptop, Mobile, Tab) with onSnapshot listeners
@@ -53,6 +53,124 @@ function sanitizeForFirestore(obj) {
   return clean;
 }
 
+
+/**
+ * =========================================================
+ *  OFFLINE QUEUE MANAGER
+ *  Internet නැති වෙලාවේ operations queue කරලා
+ *  Internet ආවොත් Firebase-ට sync කරනවා
+ * =========================================================
+ */
+const OfflineQueueManager = (function () {
+  const QUEUE_KEY = 'pos_offline_queue_v1';
+  const MAX_QUEUE_SIZE = 2000;
+  let _isSyncing = false;
+
+  function _showBanner(type, message) {
+    try {
+      const banner = document.getElementById('offlineStatusBanner');
+      if (!banner) return;
+      banner.className = 'offline-banner banner-' + type;
+      banner.textContent = message;
+      banner.style.display = 'flex';
+      if (type === 'online') {
+        setTimeout(() => { banner.style.display = 'none'; }, 3500);
+      }
+    } catch (e) {}
+  }
+
+  function _loadQueue() {
+    try {
+      const raw = localStorage.getItem(QUEUE_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch (e) { return []; }
+  }
+
+  function _saveQueue(queue) {
+    try {
+      localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
+    } catch (e) {}
+  }
+
+  function _addToQueue(op) {
+    const queue = _loadQueue();
+    if (queue.length >= MAX_QUEUE_SIZE) queue.shift();
+    queue.push({ ...op, _queuedAt: Date.now() });
+    _saveQueue(queue);
+    _showBanner('offline', '\uD83D\uDCF5 Offline Mode | ' + queue.length + ' pending sync(s)');
+  }
+
+  async function _syncQueue(dbInstance) {
+    if (_isSyncing) return;
+    const queue = _loadQueue();
+    if (queue.length === 0) {
+      _showBanner('online', '\u2705 Online | Firebase connected!');
+      return;
+    }
+
+    _isSyncing = true;
+    _showBanner('syncing', '\uD83D\uDD04 Syncing ' + queue.length + ' offline record(s) to Firebase...');
+
+    const failed = [];
+    for (const op of queue) {
+      try {
+        const { collection: col, type, docId, data } = op;
+        if (!dbInstance || !dbInstance.sdk || !dbInstance.firestoreDb) {
+          failed.push(op); continue;
+        }
+        const docRef = dbInstance.sdk.doc(dbInstance.firestoreDb, col, docId);
+        if (type === 'delete') {
+          await dbInstance.sdk.deleteDoc(docRef);
+        } else {
+          await dbInstance.sdk.setDoc(docRef, data, { merge: type === 'update' || type === 'put' });
+        }
+      } catch (e) {
+        console.warn('[OfflineQueue] Sync failed:', op, e);
+        failed.push(op);
+      }
+    }
+
+    _saveQueue(failed);
+    _isSyncing = false;
+
+    if (failed.length === 0) {
+      _showBanner('online', '\u2705 Online | All ' + queue.length + ' record(s) synced to Firebase!');
+    } else {
+      _showBanner('offline', '\uD83D\uDCF5 Offline Mode | ' + failed.length + ' pending sync(s)');
+    }
+  }
+
+  return {
+    get isOnline() { return navigator.onLine; },
+    get pendingCount() { return _loadQueue().length; },
+
+    enqueue(op) { _addToQueue(op); },
+
+    init(dbInstance) {
+      if (!navigator.onLine) {
+        const pending = _loadQueue().length;
+        _showBanner('offline', pending > 0
+          ? '\uD83D\uDCF5 Offline Mode | ' + pending + ' pending sync(s)'
+          : '\uD83D\uDCF5 Offline Mode - App works normally. Data syncs when online.');
+      } else {
+        _syncQueue(dbInstance);
+      }
+      window.addEventListener('online', () => {
+        console.log('[OfflineQueue] Internet restored. Syncing...');
+        setTimeout(() => _syncQueue(dbInstance), 2000);
+      });
+      window.addEventListener('offline', () => {
+        const pending = _loadQueue().length;
+        _showBanner('offline', '\uD83D\uDCF5 Offline Mode - App works normally. Data syncs when online.');
+        console.warn('[OfflineQueue] Internet lost. Operations will be queued.');
+      });
+    },
+
+    syncIfOnline(dbInstance) {
+      if (navigator.onLine) setTimeout(() => _syncQueue(dbInstance), 1500);
+    }
+  };
+})();
 /**
  * Debounced Real-time UI refresh trigger to instantly reflect cross-device changes without reload
  */
@@ -152,6 +270,13 @@ const triggerRealtimeUIUpdate = (function() {
           if (window.AuthManager && (AuthManager.isAdmin() || AuthManager.isManager())) {
             AuthManager.renderUsersTable();
           }
+          // Also refresh CC Manager table if the controller shell is visible
+          if (window.CompanyControllerManager) {
+            const ctrlShell = document.getElementById('controllerShell');
+            if (ctrlShell && !ctrlShell.classList.contains('hidden')) {
+              CompanyControllerManager.renderAdminsTable().catch(() => {});
+            }
+          }
         }
       } catch (err) {
         console.warn('[Firestore Realtime UI] Error updating UI:', err);
@@ -159,6 +284,44 @@ const triggerRealtimeUIUpdate = (function() {
     }, 80);
   };
 })();
+
+/**
+ * Multi-Tenant Data Isolation Scope Manager
+ * Ensures each Supermarket Admin and their Cashiers ONLY see their own data!
+ */
+function getActiveAdminScope() {
+  try {
+    if (typeof window !== 'undefined' && window.AuthManager && window.AuthManager.currentUser) {
+      if (typeof window.AuthManager.getActiveAdminId === 'function') {
+        return window.AuthManager.getActiveAdminId();
+      }
+    }
+  } catch (e) {}
+  return null;
+}
+
+function filterByTenantScope(items, collectionName) {
+  const activeAdmin = getActiveAdminScope();
+  if (!activeAdmin || activeAdmin === 'all') return items;
+
+  if (collectionName === 'settings') return items;
+
+  if (collectionName === 'users') {
+    return items.filter(u => {
+      // Return self or any user created under / assigned to this admin
+      return String(u.id) === String(activeAdmin) || String(u.adminId) === String(activeAdmin);
+    });
+  }
+
+  return items.filter(item => {
+    if (item.adminId !== undefined && item.adminId !== null) {
+      return String(item.adminId) === String(activeAdmin);
+    }
+    // Legacy data without adminId belongs to default admin (ID 1 / 'admin')
+    return String(activeAdmin) === '1' || activeAdmin === 'admin';
+  });
+}
+
 
 /**
  * Collection Query Builder (supports where, equals, equalsIgnoreCase, between, anyOf, reverse, orderBy, limit, offset)
@@ -204,6 +367,7 @@ class CollectionQuery {
   async toArray() {
     await this.collection.ensureReady();
     let items = Array.from(this.collection.docsMap.values());
+    items = filterByTenantScope(items, this.collection.name);
     for (const f of this.filters) {
       items = items.filter(f);
     }
@@ -275,12 +439,43 @@ class FirestoreCollection {
     this.dbInstance = dbInstance;
     this.docsMap = new Map(); // key -> item
     this.listeners = new Set();
-    this.isReady = true;
+    this.isReady = false;
     this.unsubscribeSnapshot = null;
+    this._readyResolve = null;
+    this._readyPromise = new Promise(resolve => { this._readyResolve = resolve; });
+    this._loadLocalCache();
+  }
+
+  _loadLocalCache() {
+    try {
+      const raw = localStorage.getItem('pos_cache_' + this.name);
+      if (raw) {
+        const items = JSON.parse(raw);
+        if (Array.isArray(items)) {
+          for (const item of items) {
+            const key = item.id !== undefined && item.id !== null ? String(item.id) : (item.key ? String(item.key) : null);
+            if (key) this.docsMap.set(key, item);
+          }
+        }
+      }
+    } catch (e) {}
+  }
+
+  _saveLocalCache() {
+    try {
+      const items = Array.from(this.docsMap.values());
+      localStorage.setItem('pos_cache_' + this.name, JSON.stringify(items));
+    } catch (e) {}
   }
 
   async ensureReady() {
-    return;
+    if (this.dbInstance && this.dbInstance.initPromise) {
+      try { await this.dbInstance.initPromise; } catch (e) {}
+    }
+    if (this._readyPromise && !this.isReady) {
+      const timeout = new Promise(res => setTimeout(res, 2000));
+      await Promise.race([this._readyPromise, timeout]);
+    }
   }
 
   setupRealtimeListener(firestoreDb, sdk) {
@@ -315,10 +510,12 @@ class FirestoreCollection {
         });
       });
 
+      this._saveLocalCache();
+
       if (isFirstSnapshot) {
         isFirstSnapshot = false;
         this.isReady = true;
-        
+        if (this._readyResolve) { this._readyResolve(); this._readyResolve = null; }
       } else {
         triggerRealtimeUIUpdate(this.name);
       }
@@ -327,7 +524,7 @@ class FirestoreCollection {
       if (isFirstSnapshot) {
         isFirstSnapshot = false;
         this.isReady = true;
-        
+        if (this._readyResolve) { this._readyResolve(); this._readyResolve = null; }
       }
     });
   }
@@ -343,7 +540,7 @@ class FirestoreCollection {
 
   async toArray() {
     await this.ensureReady();
-    return Array.from(this.docsMap.values());
+    return filterByTenantScope(Array.from(this.docsMap.values()), this.name);
   }
 
   async get(id) {
@@ -359,16 +556,40 @@ class FirestoreCollection {
       return undefined;
     }
 
+    let found = null;
     const strId = String(id);
-    if (this.docsMap.has(strId)) return this.docsMap.get(strId);
-    for (const item of this.docsMap.values()) {
-      if (item.id == id || String(item.id) === strId) return item;
+    if (this.docsMap.has(strId)) found = this.docsMap.get(strId);
+    if (!found) {
+      for (const item of this.docsMap.values()) {
+        if (item.id == id || String(item.id) === strId) {
+          found = item;
+          break;
+        }
+      }
     }
-    return undefined;
+
+    if (!found) return undefined;
+
+    // Strict Tenant Isolation Guard
+    const activeAdmin = getActiveAdminScope();
+    if (activeAdmin && activeAdmin !== 'all' && this.name !== 'users') {
+      if (found.adminId !== undefined && found.adminId !== null) {
+        if (String(found.adminId) !== String(activeAdmin)) return undefined;
+      } else {
+        if (String(activeAdmin) !== '1' && activeAdmin !== 'admin') return undefined;
+      }
+    }
+
+    return found;
   }
 
   async add(data) {
+    await this.ensureReady();
     const docData = { ...data };
+    const activeAdmin = getActiveAdminScope();
+    if (activeAdmin && activeAdmin !== 'all' && this.name !== 'settings' && this.name !== 'users' && docData.adminId === undefined) {
+      docData.adminId = activeAdmin;
+    }
     let docId = docData.id !== undefined && docData.id !== null ? String(docData.id) : null;
 
     if (!docId) {
@@ -391,19 +612,35 @@ class FirestoreCollection {
     const cleanData = sanitizeForFirestore(docData);
     const resultItem = { ...cleanData, id: docData.id !== undefined ? docData.id : docId };
     this.docsMap.set(docId, resultItem);
+    this._saveLocalCache();
 
     if (this.dbInstance && this.dbInstance.sdk && this.dbInstance.firestoreDb) {
-      try {
-        const docRef = this.dbInstance.sdk.doc(this.dbInstance.firestoreDb, this.name, docId);
-        this.dbInstance.sdk.setDoc(docRef, cleanData).catch(() => {});
-      } catch (e) {}
+      if (!navigator.onLine) {
+        OfflineQueueManager.enqueue({ collection: this.name, type: 'add', docId, data: cleanData });
+      } else {
+        try {
+          const docRef = this.dbInstance.sdk.doc(this.dbInstance.firestoreDb, this.name, docId);
+          this.dbInstance.sdk.setDoc(docRef, cleanData).catch((err) => {
+            OfflineQueueManager.enqueue({ collection: this.name, type: 'add', docId, data: cleanData });
+          });
+        } catch (e) {
+          OfflineQueueManager.enqueue({ collection: this.name, type: 'add', docId, data: cleanData });
+        }
+      }
+    } else {
+      OfflineQueueManager.enqueue({ collection: this.name, type: 'add', docId, data: cleanData });
     }
 
     return docData.id !== undefined ? docData.id : docId;
   }
 
   async put(data, key) {
+    await this.ensureReady();
     const docData = { ...data };
+    const activeAdmin = getActiveAdminScope();
+    if (activeAdmin && activeAdmin !== 'all' && this.name !== 'settings' && this.name !== 'users' && docData.adminId === undefined) {
+      docData.adminId = activeAdmin;
+    }
     let docId = key !== undefined && key !== null ? String(key) : null;
     if (!docId && docData.key !== undefined) docId = String(docData.key);
     if (!docId && docData.id !== undefined && docData.id !== null) docId = String(docData.id);
@@ -416,18 +653,30 @@ class FirestoreCollection {
     const existing = this.docsMap.get(docId) || {};
     const updatedItem = { ...existing, ...cleanData };
     this.docsMap.set(docId, updatedItem);
+    this._saveLocalCache();
 
     if (this.dbInstance && this.dbInstance.sdk && this.dbInstance.firestoreDb) {
-      try {
-        const docRef = this.dbInstance.sdk.doc(this.dbInstance.firestoreDb, this.name, docId);
-        this.dbInstance.sdk.setDoc(docRef, cleanData, { merge: true }).catch(() => {});
-      } catch (e) {}
+      if (!navigator.onLine) {
+        OfflineQueueManager.enqueue({ collection: this.name, type: 'put', docId, data: cleanData });
+      } else {
+        try {
+          const docRef = this.dbInstance.sdk.doc(this.dbInstance.firestoreDb, this.name, docId);
+          this.dbInstance.sdk.setDoc(docRef, cleanData, { merge: true }).catch((err) => {
+            OfflineQueueManager.enqueue({ collection: this.name, type: 'put', docId, data: cleanData });
+          });
+        } catch (e) {
+          OfflineQueueManager.enqueue({ collection: this.name, type: 'put', docId, data: cleanData });
+        }
+      }
+    } else {
+      OfflineQueueManager.enqueue({ collection: this.name, type: 'put', docId, data: cleanData });
     }
 
     return docData.id !== undefined ? docData.id : (docData.key !== undefined ? docData.key : docId);
   }
 
   async update(id, updates) {
+    await this.ensureReady();
     if (id === undefined || id === null) return 0;
 
     const strId = String(id);
@@ -444,18 +693,30 @@ class FirestoreCollection {
     const cleanUpdates = sanitizeForFirestore(updates);
     const existing = this.docsMap.get(targetDocId) || {};
     this.docsMap.set(targetDocId, { ...existing, ...cleanUpdates });
+    this._saveLocalCache();
 
     if (this.dbInstance && this.dbInstance.sdk && this.dbInstance.firestoreDb) {
-      try {
-        const docRef = this.dbInstance.sdk.doc(this.dbInstance.firestoreDb, this.name, targetDocId);
-        this.dbInstance.sdk.setDoc(docRef, cleanUpdates, { merge: true }).catch(() => {});
-      } catch (e) {}
+      if (!navigator.onLine) {
+        OfflineQueueManager.enqueue({ collection: this.name, type: 'update', docId: targetDocId, data: cleanUpdates });
+      } else {
+        try {
+          const docRef = this.dbInstance.sdk.doc(this.dbInstance.firestoreDb, this.name, targetDocId);
+          this.dbInstance.sdk.setDoc(docRef, cleanUpdates, { merge: true }).catch((err) => {
+            OfflineQueueManager.enqueue({ collection: this.name, type: 'update', docId: targetDocId, data: cleanUpdates });
+          });
+        } catch (e) {
+          OfflineQueueManager.enqueue({ collection: this.name, type: 'update', docId: targetDocId, data: cleanUpdates });
+        }
+      }
+    } else {
+      OfflineQueueManager.enqueue({ collection: this.name, type: 'update', docId: targetDocId, data: cleanUpdates });
     }
 
     return 1;
   }
 
   async delete(id) {
+    await this.ensureReady();
     if (id === undefined || id === null) return;
 
     const strId = String(id);
@@ -470,12 +731,23 @@ class FirestoreCollection {
     }
 
     this.docsMap.delete(targetDocId);
+    this._saveLocalCache();
 
     if (this.dbInstance && this.dbInstance.sdk && this.dbInstance.firestoreDb) {
-      try {
-        const docRef = this.dbInstance.sdk.doc(this.dbInstance.firestoreDb, this.name, targetDocId);
-        this.dbInstance.sdk.deleteDoc(docRef).catch(() => {});
-      } catch (e) {}
+      if (!navigator.onLine) {
+        OfflineQueueManager.enqueue({ collection: this.name, type: 'delete', docId: targetDocId, data: null });
+      } else {
+        try {
+          const docRef = this.dbInstance.sdk.doc(this.dbInstance.firestoreDb, this.name, targetDocId);
+          this.dbInstance.sdk.deleteDoc(docRef).catch((err) => {
+            OfflineQueueManager.enqueue({ collection: this.name, type: 'delete', docId: targetDocId, data: null });
+          });
+        } catch (e) {
+          OfflineQueueManager.enqueue({ collection: this.name, type: 'delete', docId: targetDocId, data: null });
+        }
+      }
+    } else {
+      OfflineQueueManager.enqueue({ collection: this.name, type: 'delete', docId: targetDocId, data: null });
     }
   }
 
@@ -658,6 +930,7 @@ class FirestoreDB {
 
       if (!appModule || !firestoreModule) {
         console.warn('[Firebase] Running in offline memory-first mode.');
+        OfflineQueueManager.init(this);
         return false;
       }
 
@@ -670,13 +943,14 @@ class FirestoreDB {
       }
 
       console.log('[Firestore] Real-time listeners successfully connected.');
+      OfflineQueueManager.init(this);
       return true;
     } catch (err) {
       console.warn('[Firestore] Fallback to in-memory store:', err);
+      OfflineQueueManager.init(this);
       return false;
     }
   }
-}
 }
 
 const db = new FirestoreDB();

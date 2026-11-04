@@ -483,7 +483,7 @@ const POSManager = {
           <td class="p-2.5 align-middle">
             <div class="font-bold text-slate-100 text-xs leading-snug">
               <span>${index + 1}. ${item.name}</span>
-              ${item.nameSi && item.nameSi !== item.name ? `<span class="text-[11px] text-sky-400 font-normal block font-sans">(${item.nameSi})</span>` : ''}
+                  
             </div>
             <div class="flex items-center flex-wrap gap-1.5 mt-1 text-[10px]">
               <span class="text-slate-400 font-mono px-1 py-0.2 bg-slate-950 rounded border border-slate-800">${item.sku}</span>
@@ -1347,16 +1347,197 @@ const POSManager = {
   },
 
   // Format and Display Thermal Receipt Modal with Store Logo Support
+    // Helper to remove any Sinhala/Unicode characters from Thermal Receipt
+  cleanReceiptText(txt) {
+    if (!txt) return '';
+    return String(txt)
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+  },
+
+  // Generates Complete High-Fidelity Supermarket Thermal Receipt HTML
+  buildThermalReceiptHtml(sale, settings, barcodeDataUrl) {
+    const storeLogo = settings.storeLogo;
+    const storeName = settings.storeName || 'MAYRA SUPER MARKET';
+    const storeBranch = settings.storeBranch || '';
+    const storeAddress = settings.storeAddress || '';
+    const storePhone = settings.storePhone || '';
+    const storeVat = settings.storeVat || '';
+    const receiptFooter = settings.receiptFooter || 'Thank you for shopping with us!';
+
+    const cleanCashier = this.cleanReceiptText(sale.cashierName) || 'Cashier';
+    const cleanCustomer = this.cleanReceiptText(sale.customerName) || 'Walk-in Customer';
+
+    const itemsRows = (sale.items || []).map((item, idx) => {
+      const mrp = Number(item.markedPrice) || Number(item.retailPrice) || Number(item.price);
+      const isDiscounted = mrp > item.price;
+      const cleanItemName = this.cleanReceiptText(item.name || item.productName) || 'Item';
+      const cleanUnit = this.cleanReceiptText(item.unit) || 'pcs';
+      const itemDisc = Number(item.itemDiscountAmount || 0);
+
+      return `
+        <tr style="border-bottom: 1px dashed #000;">
+          <td style="padding: 2.5px 0; vertical-align: top; text-align: left;">
+            <div style="font-weight: 800; color: #000; line-height: 1.25; font-size: 11px;">${idx + 1}. ${cleanItemName}</div>
+            ${isDiscounted ? `<div style="font-size: 9.5px; color: #000; font-weight: 700; text-decoration: line-through; margin-top: 0px;">MRP: ${mrp.toFixed(2)}</div>` : ''}
+          </td>
+          <td style="padding: 2.5px 1px; vertical-align: top; text-align: center; white-space: nowrap; font-weight: 800; font-size: 11px;">
+            ${item.qty} <span style="font-size: 9.5px; color: #000; font-weight: 700;">${cleanUnit}</span>
+          </td>
+          <td style="padding: 2.5px 1px; vertical-align: top; text-align: right; white-space: nowrap; font-weight: 800; font-size: 11px;">
+            <div>${Number(item.price || 0).toFixed(2)}</div>
+            ${itemDisc > 0 ? `<div style="font-size: 9.5px; font-weight: 900; color: #000;">-${itemDisc.toFixed(2)}</div>` : ''}
+          </td>
+          <td style="padding: 2.5px 3px 2.5px 0; vertical-align: top; text-align: right; white-space: nowrap; font-weight: 900; font-size: 11.5px;">
+            ${Number(item.total || 0).toFixed(2)}
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    let paymentHtml = '';
+    if (sale.paymentMethod === 'split' || (sale.creditAmount && sale.creditAmount > 0)) {
+      paymentHtml = `
+        <div style="display:flex; justify-content:space-between; padding-top:3px; font-weight: 800;">
+          <span style="text-transform:uppercase;">Method:</span>
+          <strong>SPLIT (Cash + Credit)</strong>
+        </div>
+        <div style="display:flex; justify-content:space-between; font-weight: 800;">
+          <span>Cash Paid:</span>
+          <span>${formatLKR(sale.paidCash || sale.tenderedAmount || 0)}</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; font-weight: 800;">
+          <span>Added to Credit:</span>
+          <span>${formatLKR(sale.creditAmount || 0)}</span>
+        </div>
+        ${sale.customerNewBalance !== undefined ? `
+          <div style="display:flex; justify-content:space-between; font-size:11px; font-weight:800; border-top:1.5px dashed #000; padding-top:2px; margin-top:2px;">
+            <span>Customer Total Due:</span>
+            <strong>${formatLKR(sale.customerNewBalance)}</strong>
+          </div>
+        ` : ''}
+      `;
+    } else {
+      paymentHtml = `
+        <div style="display:flex; justify-content:space-between; padding-top:3px; font-weight: 800;">
+          <span style="text-transform:uppercase;">Payment (${sale.paymentMethod || 'Cash'}):</span>
+          <span>${formatLKR(sale.tenderedAmount || sale.grandTotal)}</span>
+        </div>
+        ${sale.paymentMethod === 'cash' ? `
+          <div style="display:flex; justify-content:space-between; font-weight: 800;">
+            <span>Change Returned:</span>
+            <span>${formatLKR(sale.changeAmount || 0)}</span>
+          </div>
+        ` : ''}
+      `;
+    }
+
+    return `
+      <!-- Store Header -->
+      <div style="text-align: center; padding-bottom: 4px; border-bottom: 2px solid #000;">
+        ${storeLogo ? `<img src="${storeLogo}" style="max-height: 56px; max-width: 200px; display: block; margin: 0 auto 5px auto; object-fit: contain;" alt="Logo" />` : ''}
+        <h2 style="font-size: 16px; font-weight: 900; text-transform: uppercase; margin: 0; letter-spacing: 0.5px; color: #000;">${storeName}</h2>
+        ${storeBranch ? `<div style="font-size: 11px; font-weight: 700; color: #000; margin-top: 1px;">${storeBranch}</div>` : ''}
+        ${storeAddress ? `<div style="font-size: 11px; font-weight: 700; color: #000; line-height: 1.3;">${storeAddress}</div>` : ''}
+        ${storePhone ? `<div style="font-size: 11px; font-weight: 800; color: #000;">Tel: ${storePhone}</div>` : ''}
+        ${storeVat ? `<div style="font-size: 11px; font-weight: 800;">VAT Reg: ${storeVat}</div>` : ''}
+      </div>
+
+      <!-- Invoice Details -->
+      <div style="padding: 4px 0; font-size: 11px; font-weight: 700; border-bottom: 2px solid #000; line-height: 1.35;">
+        <div style="display: flex; justify-content: space-between;">
+          <span>Invoice No:</span>
+          <strong style="font-weight: 900; font-size: 11.5px;">${sale.invoiceNo}</strong>
+        </div>
+        <div style="display: flex; justify-content: space-between;">
+          <span>Date/Time:</span>
+          <span>${new Date(sale.timestamp).toLocaleString()}</span>
+        </div>
+        <div style="display: flex; justify-content: space-between;">
+          <span>Cashier:</span>
+          <span>${cleanCashier}</span>
+        </div>
+        <div style="display: flex; justify-content: space-between;">
+          <span>Customer:</span>
+          <span>${cleanCustomer}</span>
+        </div>
+      </div>
+
+      <!-- Items Table -->
+      <div style="padding: 2px 0; border-bottom: 2px solid #000;">
+        <table style="width: 100%; border-collapse: collapse; font-size: 11.5px; font-family: inherit;">
+          <thead>
+            <tr style="border-top: 2px solid #000; border-bottom: 2px solid #000; font-size: 11px; font-weight: 900; text-transform: uppercase;">
+              <th style="padding: 3px 0; text-align: left; width: 42%;"># ITEM</th>
+              <th style="padding: 3px 1px; text-align: center; width: 17%;">QTY</th>
+              <th style="padding: 3px 1px; text-align: right; width: 19%;">PRICE</th>
+              <th style="padding: 3px 3px 3px 0; text-align: right; width: 22%;">TOTAL</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${itemsRows}
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Financial Totals -->
+      <div style="padding-top: 4px; font-size: 11.5px; font-weight: 700; line-height: 1.35; padding-right: 3px;">
+        ${sale.subtotalMRP && sale.subtotalMRP > sale.grandTotal ? `
+          <div style="display: flex; justify-content: space-between; color: #000; font-weight: 700; padding: 1px 0;">
+            <span>Subtotal (MRP Value):</span>
+            <span style="text-decoration: line-through;">${formatLKR(sale.subtotalMRP)}</span>
+          </div>
+        ` : ''}
+        <div style="display: flex; justify-content: space-between; font-weight: 800; padding: 1px 0;">
+          <span>Subtotal:</span>
+          <span>${formatLKR(sale.subtotal)}</span>
+        </div>
+        ${sale.totalDiscount > 0 ? `
+          <div style="display: flex; justify-content: space-between; font-weight: 900; padding: 1px 0;">
+            <span>Total Discount:</span>
+            <span>-${formatLKR(sale.totalDiscount)}</span>
+          </div>
+        ` : ''}
+        ${sale.tax > 0 ? `
+          <div style="display: flex; justify-content: space-between; font-weight: 800; padding: 1px 0;">
+            <span>Tax / VAT:</span>
+            <span>${formatLKR(sale.tax)}</span>
+          </div>
+        ` : ''}
+
+        <!-- GRAND TOTAL -->
+        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 15px; font-weight: 900; border-top: 2.5px solid #000; border-bottom: 2.5px solid #000; padding: 4px 1px; margin: 4px 0;">
+          <span>GRAND TOTAL:</span>
+          <span style="font-size: 15px; font-weight: 900;">${formatLKR(sale.grandTotal)}</span>
+        </div>
+
+        ${sale.totalSavings && sale.totalSavings > 0 ? `
+          <div style="border: 2px solid #000; padding: 4px; margin: 5px 0; text-align: center; font-size: 12px; font-weight: 900; background: #fff;">
+            ** YOU SAVED: ${formatLKR(sale.totalSavings)} **
+          </div>
+        ` : ''}
+
+        ${paymentHtml}
+      </div>
+
+      <!-- Footer & Barcode -->
+      <div style="text-align: center; padding-top: 4px; margin-top: 4px; border-top: 2px solid #000; font-size: 11px; font-weight: 800;">
+        ${receiptFooter ? `<div style="font-weight: 800; margin-bottom: 5px;">${receiptFooter}</div>` : ''}
+        ${barcodeDataUrl ? `<img src="${barcodeDataUrl}" style="max-height: 44px; display: block; margin: 5px auto 0 auto;" alt="Barcode" />` : ''}
+      </div>
+    `;
+  },
+
+  // Format and Display Thermal Receipt Modal with Store Logo Support
   async showReceiptModal(sale) {
     if (!sale) return;
 
     const storeLogo = await getSetting('store_logo', null);
-    const storeName = await getSetting('store_name', '');
-    const storeNameSi = await getSetting('store_name_si', '');
-    const storeBranch = await getSetting('store_branch', '');
-    const storeAddress = await getSetting('store_address', '');
-    const storePhone = await getSetting('store_phone', '');
-    const storeVat = await getSetting('store_vat_no', '');
+    const storeName = this.cleanReceiptText(await getSetting('store_name', ''));
+    const storeBranch = this.cleanReceiptText(await getSetting('store_branch', ''));
+    const storeAddress = this.cleanReceiptText(await getSetting('store_address', ''));
+    const storePhone = this.cleanReceiptText(await getSetting('store_phone', ''));
+    const storeVat = this.cleanReceiptText(await getSetting('store_vat_no', ''));
     const receiptFooterRaw = await getSetting('receipt_footer', '');
     const isLankaPOSFooter = receiptFooterRaw && (
       receiptFooterRaw.includes('LankaPOS') || 
@@ -1364,152 +1545,34 @@ const POSManager = {
       receiptFooterRaw.includes('retail suite') ||
       receiptFooterRaw.includes('Offline Retail')
     );
-    const receiptFooter = isLankaPOSFooter ? 'Thank you for shopping with us!' : receiptFooterRaw;
+    const receiptFooter = isLankaPOSFooter ? 'Thank you for shopping with us!' : this.cleanReceiptText(receiptFooterRaw);
     const thermalWidth = await getSetting('thermal_width', '80mm');
 
-    const htmlContent = `
-      <div class="text-center pb-2 border-b border-dashed border-slate-700 font-mono">
-        ${storeLogo ? `<img src="${storeLogo}" class="max-h-12 mx-auto mb-1.5 object-contain" alt="Logo" />` : ''}
-        ${storeName ? `<h2 class="text-base font-extrabold tracking-tight text-slate-900 uppercase">${storeName}</h2>` : ''}
-        ${storeNameSi && storeNameSi !== 'ලංකා මෙගා සුපර්මාර්කට්' ? `<div class="text-xs text-slate-800 font-bold">${storeNameSi}</div>` : ''}
-        ${storeBranch ? `<div class="text-[11px] text-slate-600">${storeBranch}</div>` : ''}
-        ${storeAddress ? `<div class="text-[11px] text-slate-600 leading-tight">${storeAddress}</div>` : ''}
-        ${storePhone ? `<div class="text-[11px] text-slate-600">Tel: ${storePhone}</div>` : ''}
-        ${storeVat ? `<div class="text-[11px] text-slate-600 font-bold">VAT Reg: ${storeVat}</div>` : ''}
-      </div>
+    // Generate Barcode PNG Data URL using JsBarcode
+    let barcodeDataUrl = '';
+    try {
+      const canvas = document.createElement('canvas');
+      if (window.JsBarcode) {
+        JsBarcode(canvas, sale.invoiceNo, {
+          format: 'CODE128',
+          width: 1.5,
+          height: 38,
+          displayValue: true,
+          fontSize: 10,
+          margin: 2
+        });
+        barcodeDataUrl = canvas.toDataURL('image/png');
+      }
+    } catch (e) {
+      console.warn('Barcode generation warning:', e);
+    }
 
-      <div class="py-2 text-[11px] font-mono border-b border-dashed border-slate-700 space-y-0.5">
-        <div class="flex justify-between">
-          <span>Invoice No:</span>
-          <strong>${sale.invoiceNo}</strong>
-        </div>
-        <div class="flex justify-between">
-          <span>Date/Time:</span>
-          <span>${new Date(sale.timestamp).toLocaleString()}</span>
-        </div>
-        <div class="flex justify-between">
-          <span>Cashier:</span>
-          <span>${sale.cashierName}</span>
-        </div>
-        <div class="flex justify-between">
-          <span>Customer:</span>
-          <span>${sale.customerName}</span>
-        </div>
-      </div>
+    this.currentReceiptSettings = {
+      storeLogo, storeName, storeBranch, storeAddress, storePhone, storeVat, receiptFooter, thermalWidth, barcodeDataUrl
+    };
+    this.currentReceiptSale = sale;
 
-      <div class="py-2 border-b border-dashed border-slate-900 font-mono text-[11px]">
-        <table class="w-full border-collapse">
-          <thead>
-            <tr class="border-t border-b border-slate-900 font-bold uppercase text-[10px]">
-              <th class="py-1 text-left" style="width: 46%;"># ITEM</th>
-              <th class="py-1 text-center" style="width: 16%;">QTY</th>
-              <th class="py-1 text-right" style="width: 19%;">PRICE</th>
-              <th class="py-1 text-right" style="width: 19%;">TOTAL</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-dotted divide-slate-300">
-            ${sale.items.map((item, idx) => {
-              const mrp = Number(item.markedPrice) || Number(item.retailPrice) || Number(item.price);
-              const isDiscounted = mrp > item.price;
-              return `
-              <tr>
-                <td class="py-1.5 pr-1 align-top">
-                  <div class="font-bold text-slate-900 leading-snug">${idx + 1}. ${item.name}</div>
-                  ${item.nameSi && item.nameSi !== item.name ? `<div class="text-[10px] text-slate-600 font-sans">${item.nameSi}</div>` : ''}
-                  ${isDiscounted ? `<div class="text-[9px] text-slate-400 line-through font-mono">MRP: ${mrp.toFixed(2)}</div>` : ''}
-                </td>
-                <td class="py-1.5 text-center align-top whitespace-nowrap font-semibold text-slate-800">
-                  ${item.qty} <span class="text-[9px] text-slate-500">${item.unit}</span>
-                </td>
-                <td class="py-1.5 text-right align-top whitespace-nowrap text-slate-700">
-                  <div>${item.price.toFixed(2)}</div>
-                  ${item.itemDiscountAmount > 0 ? `<div class="text-[9px] text-emerald-700 font-bold">-${item.itemDiscountAmount.toFixed(2)}</div>` : ''}
-                </td>
-                <td class="py-1.5 text-right align-top whitespace-nowrap font-black text-slate-900">
-                  ${item.total.toFixed(2)}
-                </td>
-              </tr>
-              `;
-            }).join('')}
-          </tbody>
-        </table>
-      </div>
-
-      <div class="pt-2 border-t-2 border-slate-900 text-xs font-mono space-y-1">
-        ${sale.subtotalMRP && sale.subtotalMRP > sale.grandTotal ? `
-          <div class="flex justify-between text-slate-600">
-            <span>Subtotal (MRP Value):</span>
-            <span class="line-through">${formatLKR(sale.subtotalMRP)}</span>
-          </div>
-        ` : ''}
-        <div class="flex justify-between">
-          <span>Subtotal:</span>
-          <span>${formatLKR(sale.subtotal)}</span>
-        </div>
-        ${sale.totalDiscount > 0 ? `
-          <div class="flex justify-between text-emerald-700 font-semibold">
-            <span>Total Discount:</span>
-            <span>-${formatLKR(sale.totalDiscount)}</span>
-          </div>
-        ` : ''}
-        ${sale.tax > 0 ? `
-          <div class="flex justify-between">
-            <span>Tax / VAT:</span>
-            <span>${formatLKR(sale.tax)}</span>
-          </div>
-        ` : ''}
-        <div class="flex justify-between text-sm font-black border-t border-b border-slate-900 py-1">
-          <span>GRAND TOTAL:</span>
-          <span>${formatLKR(sale.grandTotal)}</span>
-        </div>
-
-        ${sale.totalSavings && sale.totalSavings > 0 ? `
-          <div class="flex justify-between font-bold text-emerald-800 bg-emerald-50 border border-dashed border-emerald-600 p-1.5 rounded my-1 text-center">
-            <span class="text-[11px]">🎉 ඔබට ලැබුණු මුළු ලාභය / YOU SAVED:</span>
-            <span class="text-xs font-black text-emerald-700">${formatLKR(sale.totalSavings)}</span>
-          </div>
-        ` : ''}
-        
-        ${sale.paymentMethod === 'split' || (sale.creditAmount && sale.creditAmount > 0) ? `
-          <div class="flex justify-between pt-1">
-            <span class="uppercase">Method:</span>
-            <strong>SPLIT (Cash + Credit)</strong>
-          </div>
-          <div class="flex justify-between text-emerald-800 font-bold">
-            <span>Cash Paid:</span>
-            <span>${formatLKR(sale.paidCash || sale.tenderedAmount || 0)}</span>
-          </div>
-          <div class="flex justify-between text-rose-800 font-bold">
-            <span>Added to Credit:</span>
-            <span>${formatLKR(sale.creditAmount || 0)}</span>
-          </div>
-          ${sale.customerNewBalance !== undefined ? `
-            <div class="flex justify-between text-slate-700 text-[10px] pt-1 border-t border-dotted border-slate-400">
-              <span>Customer Total Due:</span>
-              <strong>${formatLKR(sale.customerNewBalance)}</strong>
-            </div>
-          ` : ''}
-        ` : `
-          <div class="flex justify-between pt-1">
-            <span class="uppercase">Payment (${sale.paymentMethod}):</span>
-            <span>${formatLKR(sale.tenderedAmount)}</span>
-          </div>
-          ${sale.paymentMethod === 'cash' ? `
-            <div class="flex justify-between">
-              <span>Change Returned:</span>
-              <span class="font-bold">${formatLKR(sale.changeAmount)}</span>
-            </div>
-          ` : ''}
-        `}
-      </div>
-
-      <div class="text-center pt-3 mt-2 border-t border-dashed border-slate-700 text-xs font-mono space-y-1">
-        ${receiptFooter ? `<div>${receiptFooter}</div>` : ''}
-        <div class="pt-1 flex justify-center">
-          <svg id="receiptBarcodeCanvas" class="h-10"></svg>
-        </div>
-      </div>
-    `;
+    const htmlContent = this.buildThermalReceiptHtml(sale, this.currentReceiptSettings, barcodeDataUrl);
 
     const previewContainer = document.getElementById('receiptPreviewContent');
     if (previewContainer) previewContainer.innerHTML = htmlContent;
@@ -1524,22 +1587,6 @@ const POSManager = {
       }
     }
 
-    if (window.JsBarcode) {
-      setTimeout(() => {
-        try {
-          JsBarcode('#receiptBarcodeCanvas', sale.invoiceNo, {
-            format: 'CODE128',
-            width: 1.2,
-            height: 32,
-            displayValue: true,
-            fontSize: 9
-          });
-        } catch (e) {
-          console.warn('Barcode error on receipt:', e);
-        }
-      }, 50);
-    }
-
     document.getElementById('receiptModal').classList.remove('hidden');
 
     const autoPrint = await getSetting('auto_print_receipt', false);
@@ -1549,16 +1596,84 @@ const POSManager = {
   },
 
   printThermalReceipt() {
-    document.body.classList.add('printing-receipt');
-    window.print();
-    setTimeout(() => {
-      document.body.classList.remove('printing-receipt');
-    }, 1000);
-  },
+    const sale = this.currentReceiptSale || this.lastCompletedSale;
+    const settings = this.currentReceiptSettings || {};
+    const barcodeDataUrl = settings.barcodeDataUrl || '';
+    const thermalHtml = sale ? this.buildThermalReceiptHtml(sale, settings, barcodeDataUrl) : (document.getElementById('thermalReceiptPrintArea')?.innerHTML || '');
 
-  // ==========================================
-  // SALES HISTORY, REPRINT & RETURNS / REFUNDS
-  // ==========================================
+    // Open dedicated high-resolution print window
+    const printWin = window.open('', '_blank', 'width=380,height=600,top=100,left=100');
+    if (!printWin) {
+      document.body.classList.add('printing-receipt');
+      window.print();
+      setTimeout(() => document.body.classList.remove('printing-receipt'), 1000);
+      return;
+    }
+
+    const is58mm = (settings.thermalWidth === '58mm');
+    const receiptWidth = is58mm ? '48mm' : '70mm';
+    const baseFontSize = is58mm ? '10px' : '11px';
+    const openScript = '<' + 'script>';
+    const closeScript = '<' + '/script>';
+    const closeBody = '<' + '/body>';
+    const closeHtml = '<' + '/html>';
+
+    printWin.document.open();
+    printWin.document.write(`<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Receipt ${sale?.invoiceNo || ''}</title>
+<style>
+  @page {
+    margin: 0;
+    size: auto;
+  }
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color: #000000 !important;
+    font-weight: 700 !important;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    background: #ffffff;
+    color: #000000 !important;
+    font-family: 'JetBrains Mono', 'Segoe UI Mono', monospace, 'Noto Sans Sinhala', sans-serif;
+    font-size: ${baseFontSize};
+    font-weight: 700;
+    line-height: 1.35;
+    width: ${receiptWidth};
+    max-width: ${receiptWidth};
+    margin: 0 auto;
+    padding: 2mm 3.5mm 6mm 2mm;
+    overflow-x: hidden;
+  }
+  span, div, td, th, p, strong, h1, h2, h3 { color: #000000 !important; font-weight: inherit; }
+  strong, h1, h2, h3, th { font-weight: 900 !important; }
+  table { width: 100%; border-collapse: collapse; font-family: inherit; font-size: inherit; }
+  th, td { font-family: inherit; font-size: inherit; }
+  img { max-width: 100%; display: block; }
+</style>
+</head>
+<body>
+${thermalHtml}
+${openScript}
+  window.onload = function() {
+    setTimeout(function() {
+      window.focus();
+      window.print();
+      setTimeout(function() { window.close(); }, 800);
+    }, 150);
+  };
+${closeScript}
+${closeBody}
+${closeHtml}`);
+    printWin.document.close();
+  },
 
   async openSalesHistoryModal() {
     const modal = document.getElementById('salesHistoryModal');
