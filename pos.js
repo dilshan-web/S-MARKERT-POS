@@ -56,6 +56,9 @@ const POSManager = {
     const tabBtnCart = document.getElementById('posMobileTabCart');
     const tabBtnProd = document.getElementById('posMobileTabProd');
 
+    document.body.classList.remove('mobile-pos-cart-active', 'mobile-pos-products-active');
+    document.body.classList.add(seg === 'cart' ? 'mobile-pos-cart-active' : 'mobile-pos-products-active');
+
     if (window.innerWidth < 768) {
       // Mobile Phone Only
       if (seg === 'cart') {
@@ -134,7 +137,14 @@ const POSManager = {
       e.preventDefault();
       const input = document.getElementById('posSearchInput');
       const query = (input ? input.value : this.searchQuery || '').trim();
-      if (!query) return;
+
+      // Empty search + Enter → go to price field of last added item
+      if (!query) {
+        if (this.cart.length > 0) {
+          this.editItemPrice(0);
+        }
+        return;
+      }
 
       const upperQ = query.toUpperCase();
 
@@ -150,7 +160,41 @@ const POSManager = {
         }
       }
 
-      // 1. Exact Barcode or SKU match
+      // 1. Use already-filtered products visible in grid (fastest - no extra DB call)
+      if (this.lastFilteredProducts && this.lastFilteredProducts.length > 0) {
+        const q = query.toLowerCase();
+        // Exact SKU/barcode match in filtered list first
+        const exactInGrid = this.lastFilteredProducts.find(p =>
+          p.sku === query ||
+          (p.barcodes && p.barcodes.includes(query))
+        );
+        if (exactInGrid) {
+          await this.addProduct(exactInGrid, 1);
+          this.clearSearchInputAndRefocus();
+          return;
+        }
+        // If only 1 product showing in grid → add it directly
+        if (this.lastFilteredProducts.length === 1) {
+          await this.addProduct(this.lastFilteredProducts[0], 1);
+          this.clearSearchInputAndRefocus();
+          return;
+        }
+        // Multiple matches → find best name/sku match
+        const bestMatch = this.lastFilteredProducts.find(p =>
+          p.name.toLowerCase().includes(q) ||
+          (p.nameSi && p.nameSi.toLowerCase().includes(q)) ||
+          p.sku.toLowerCase().includes(q) ||
+          (p.brand && p.brand.toLowerCase().includes(q)) ||
+          (p.barcodes && p.barcodes.some(b => b.toLowerCase().includes(q)))
+        );
+        if (bestMatch) {
+          await this.addProduct(bestMatch, 1);
+          this.clearSearchInputAndRefocus();
+          return;
+        }
+      }
+
+      // 2. Fallback: Exact Barcode or SKU match from DB
       const exactMatch = await db.products
         .where('barcodes')
         .equals(query)
@@ -164,15 +208,15 @@ const POSManager = {
         return;
       }
 
-      // 2. Partial Search Match (Name, Sinhala Name, SKU, Barcode, Brand)
-      const q = query.toLowerCase();
+      // 3. Fallback: Partial Search from DB
+      const q2 = query.toLowerCase();
       const allProducts = await db.products.toArray();
       const match = allProducts.find(p =>
-        p.name.toLowerCase().includes(q) ||
-        (p.nameSi && p.nameSi.toLowerCase().includes(q)) ||
-        p.sku.toLowerCase().includes(q) ||
-        (p.brand && p.brand.toLowerCase().includes(q)) ||
-        (p.barcodes && p.barcodes.some(b => b.toLowerCase().includes(q)))
+        p.name.toLowerCase().includes(q2) ||
+        (p.nameSi && p.nameSi.toLowerCase().includes(q2)) ||
+        p.sku.toLowerCase().includes(q2) ||
+        (p.brand && p.brand.toLowerCase().includes(q2)) ||
+        (p.barcodes && p.barcodes.some(b => b.toLowerCase().includes(q2)))
       );
 
       if (match) {
@@ -349,25 +393,51 @@ const POSManager = {
 
   editItemPrice(index) {
     if (!this.cart[index]) return;
-    const item = this.cart[index];
+    // Show inline input directly in the price cell
+    const priceBtn = document.getElementById(`pos-price-btn-${index}`);
+    const priceInput = document.getElementById(`pos-price-input-${index}`);
+    if (priceBtn && priceInput) {
+      priceBtn.classList.add('hidden');
+      priceInput.classList.remove('hidden');
+      priceInput.focus();
+      priceInput.select();
+    }
+  },
 
-    AuthManager.requireAdminAuth({
-      actionName: 'Override Cart Item Price',
-      actionDesc: `Change price for "${item.name}" (Current: ${formatLKR(item.price)})`,
-      requiredPerm: 'allowPriceEdit',
-      onAuthorized: () => {
-        const newPriceStr = prompt(`Edit Unit Price for:\n${item.name}\nCurrent Price: ${formatLKR(item.price)}`, item.price);
-        if (newPriceStr !== null) {
-          const newPrice = parseFloat(newPriceStr);
-          if (!isNaN(newPrice) && newPrice >= 0) {
-            item.price = newPrice;
-            this.recalculateItemTotal(item);
-            this.renderCart();
-            SoundManager.playScanBeep();
-          }
-        }
+  updateItemPriceInline(index, newVal) {
+    if (!this.cart[index]) return;
+    const newPrice = parseFloat(newVal);
+    if (!isNaN(newPrice) && newPrice >= 0) {
+      this.cart[index].price = newPrice;
+      this.recalculateItemTotal(this.cart[index]);
+      SoundManager.playScanBeep();
+    }
+    this.renderCart();
+    this.focusSearchInput();
+  },
+
+  // Enter on price field → save price then jump to qty field
+  confirmPriceGoQty(index, newVal) {
+    if (!this.cart[index]) return;
+    const newPrice = parseFloat(newVal);
+    if (!isNaN(newPrice) && newPrice >= 0) {
+      this.cart[index].price = newPrice;
+      this.recalculateItemTotal(this.cart[index]);
+      SoundManager.playScanBeep();
+    }
+    this.renderCart();
+    this.focusCartItemQty(index);
+  },
+
+  // Focus the qty input of a specific cart row
+  focusCartItemQty(index) {
+    setTimeout(() => {
+      const qtyInput = document.getElementById(`pos-qty-input-${index}`);
+      if (qtyInput) {
+        qtyInput.focus();
+        qtyInput.select();
       }
-    });
+    }, 40);
   },
 
   updateItemDiscount(index, discountVal, type = 'percent') {
@@ -476,6 +546,11 @@ const POSManager = {
       cartContainer.innerHTML = this.cart.map((item, index) => {
         const mrp = Number(item.markedPrice) || Number(item.retailPrice) || Number(item.price);
         const itemSaving = ((mrp - item.price) * item.qty) + (item.itemDiscountAmount || 0);
+        // Profit calculation: (selling price - cost price) × qty
+        const costPrice = Number(item.costPrice) || 0;
+        const itemProfit = (item.price - costPrice) * item.qty;
+        const profitColor = itemProfit > 0 ? 'text-emerald-400' : (itemProfit < 0 ? 'text-rose-400' : 'text-slate-500');
+        const profitLabel = itemProfit >= 0 ? `+${formatLKR(itemProfit)}` : formatLKR(itemProfit);
 
         return `
         <tr class="border-b border-slate-800/90 hover:bg-slate-800/50 transition-colors">
@@ -502,30 +577,39 @@ const POSManager = {
             </div>
           </td>
 
-          <!-- 2. Unit Price -->
+          <!-- 2. Unit Price (Inline Editable) -->
           <td class="p-2 text-right align-middle whitespace-nowrap">
-            <button onclick="POSManager.editItemPrice(${index})" 
+            <button id="pos-price-btn-${index}"
+                    onclick="POSManager.editItemPrice(${index})"
                     class="font-mono font-bold text-sky-300 hover:text-sky-200 underline decoration-dotted decoration-sky-500/50 text-xs" 
                     title="Click to edit unit price">
               ${formatLKR(item.price)}
             </button>
+            <input id="pos-price-input-${index}"
+                   type="number" step="0.01" min="0"
+                   value="${item.price}"
+                   class="hidden w-16 text-right bg-sky-950 border border-sky-500 text-sky-100 font-mono text-xs rounded px-1 py-0.5 focus:outline-none"
+                   onkeydown="if(event.key==='Enter'){ event.preventDefault(); POSManager.confirmPriceGoQty(${index}, this.value); }
+                              if(event.key==='Escape'){ POSManager.renderCart(); POSManager.focusSearchInput(); }"
+                   onblur="POSManager.updateItemPriceInline(${index}, this.value)" />
             <div class="text-[10px] text-slate-500 font-mono">per ${item.unit}</div>
             ${mrp > item.price ? `
               <div class="text-[9px] text-slate-500 line-through font-mono">MRP ${formatLKR(mrp)}</div>
             ` : ''}
+            <div class="text-[9px] font-mono font-bold ${profitColor}" title="Profit per line">P: ${profitLabel}</div>
           </td>
 
           <!-- 3. Quantity Stepper -->
-          <td class="p-2 text-center align-middle whitespace-nowrap">
+          <td class="p-1 sm:p-2 text-center align-middle whitespace-nowrap">
             <div class="inline-flex items-center bg-slate-950 border border-slate-700 rounded-lg overflow-hidden shadow-inner">
               <button onclick="POSManager.updateItemQty(${index}, ${item.qty - (item.unit === 'kg' ? 0.25 : 1)}); POSManager.focusSearchInput();" 
-                      class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs active:bg-slate-600 font-bold select-none" title="Decrease Qty">-</button>
-              <input type="number" step="${item.unit === 'kg' ? '0.05' : '1'}" min="0.01" value="${item.qty}"
+                      class="w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm active:bg-slate-600 font-bold select-none" title="Decrease Qty">-</button>
+              <input type="number" id="pos-qty-input-${index}" step="${item.unit === 'kg' ? '0.05' : '1'}" min="0.01" value="${item.qty}"
                      onchange="POSManager.updateItemQty(${index}, this.value); POSManager.focusSearchInput();"
                      onkeydown="if(event.key==='Enter'){ event.preventDefault(); POSManager.updateItemQty(${index}, this.value); POSManager.focusSearchInput(); }"
-                     class="w-12 text-center bg-transparent text-slate-100 font-mono text-xs py-1 font-bold focus:outline-none focus:bg-slate-800" title="Edit quantity and press Enter to return to search" />
+                     class="w-10 sm:w-12 text-center bg-transparent text-slate-100 font-mono text-xs py-1 font-bold focus:outline-none focus:bg-slate-800" title="Edit quantity and press Enter to return to search" />
               <button onclick="POSManager.updateItemQty(${index}, ${item.qty + (item.unit === 'kg' ? 0.25 : 1)}); POSManager.focusSearchInput();" 
-                      class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs active:bg-slate-600 font-bold select-none" title="Increase Qty">+</button>
+                      class="w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm active:bg-slate-600 font-bold select-none" title="Increase Qty">+</button>
             </div>
             <div class="text-[10px] text-slate-400 font-mono mt-0.5">${item.unit}</div>
           </td>
@@ -820,61 +904,105 @@ const POSManager = {
     const container = document.getElementById('recallBillsList');
     if (!container) return;
 
-    if (bills.length === 0) {
-      container.innerHTML = `<div class="p-8 text-center text-slate-400">No held bills found.</div>`;
+    if (!bills || bills.length === 0) {
+      container.innerHTML = `<div class="p-8 text-center text-slate-400">No held bills found (තබා ඇති බිල්පත් නොමැත).</div>`;
     } else {
-      container.innerHTML = bills.map(b => `
-        <div class="p-4 bg-slate-900 border border-slate-700 rounded-xl flex items-center justify-between hover:border-sky-500 transition">
-          <div>
-            <div class="font-bold text-slate-100">${b.customerName} <span class="text-xs font-normal text-slate-400">(${b.cartItems.length} items)</span></div>
-            <div class="text-xs text-slate-400">${new Date(b.timestamp).toLocaleTimeString()} &bull; <strong class="text-sky-400 font-mono">${formatLKR(b.grandTotal)}</strong></div>
-            ${b.note ? `<div class="text-xs text-amber-300 italic mt-0.5">"${b.note}"</div>` : ''}
+      container.innerHTML = bills.map(b => {
+        const safeId = String(b.id || '').replace(/'/g, "\\'");
+        const itemCount = Array.isArray(b.cartItems) ? b.cartItems.length : 0;
+        const timeStr = b.timestamp ? new Date(b.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+        return `
+        <div class="p-3.5 sm:p-4 bg-slate-900 border border-slate-700 rounded-xl flex items-center justify-between hover:border-sky-500 transition gap-2">
+          <div class="min-w-0 flex-1">
+            <div class="font-bold text-slate-100 text-xs sm:text-sm truncate">${b.customerName || 'Held Bill'} <span class="text-xs font-normal text-slate-400">(${itemCount} items)</span></div>
+            <div class="text-[11px] sm:text-xs text-slate-400 mt-0.5">${timeStr} &bull; <strong class="text-sky-400 font-mono">${formatLKR(b.grandTotal || 0)}</strong></div>
+            ${b.note ? `<div class="text-[11px] text-amber-300 italic mt-0.5 truncate">"${b.note}"</div>` : ''}
           </div>
-          <div class="flex items-center gap-2">
-            <button onclick="POSManager.recallBill(${b.id})" class="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-xs font-bold transition">
-              Recall & Load
+          <div class="flex items-center gap-2 shrink-0">
+            <button onclick="POSManager.recallBill('${safeId}')" class="px-3 py-2 bg-sky-600 hover:bg-sky-500 active:scale-95 text-white rounded-xl text-xs font-bold transition shadow shadow-sky-600/30 flex items-center gap-1 cursor-pointer">
+              <span>▶️</span> <span>Recall & Load</span>
             </button>
-            <button onclick="POSManager.deleteHoldBill(${b.id})" class="p-1.5 text-rose-400 hover:bg-rose-950 rounded-lg transition" title="Delete">
+            <button onclick="POSManager.deleteHoldBill('${safeId}')" class="p-2 text-rose-400 hover:bg-rose-950/60 rounded-xl transition cursor-pointer" title="Delete Held Bill">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
             </button>
           </div>
         </div>
-      `).join('');
+      `;
+      }).join('');
     }
 
-    document.getElementById('recallBillsModal').classList.remove('hidden');
+    const modal = document.getElementById('recallBillsModal');
+    if (modal) modal.classList.remove('hidden');
   },
 
   async recallBill(holdBillId) {
-    const bill = await db.holdBills.get(holdBillId);
-    if (!bill) return;
+    if (!holdBillId) return;
+    try {
+      let bill = await db.holdBills.get(holdBillId);
+      if (!bill) {
+        // Fallback search by string or number comparison
+        const allBills = await db.holdBills.toArray();
+        bill = allBills.find(b => String(b.id) === String(holdBillId) || String(b.id) === String(Number(holdBillId)));
+      }
 
-    if (this.cart.length > 0 && !confirm('Active cart has items. Overwrite with held bill?')) {
-      return;
+      if (!bill) {
+        alert('Held bill not found or already recalled.');
+        return;
+      }
+
+      if (this.cart.length > 0 && !confirm('Active cart has items. Overwrite with held bill? (දැනට ඇති බිල වෙනුවට මෙම බිල තෝරාගන්නද?)')) {
+        return;
+      }
+
+      this.cart = Array.isArray(bill.cartItems) ? JSON.parse(JSON.stringify(bill.cartItems)) : [];
+      this.pricingMode = bill.pricingMode || 'retail';
+      this.billDiscountType = bill.billDiscountType || 'fixed';
+      this.billDiscountValue = bill.billDiscountValue || 0;
+      this.updatePricingModeUI();
+
+      if (bill.customerId) {
+        try {
+          this.selectedCustomer = await db.customers.get(bill.customerId);
+        } catch (e) {
+          this.selectedCustomer = null;
+        }
+      } else {
+        this.selectedCustomer = null;
+      }
+
+      try {
+        await db.holdBills.delete(bill.id || holdBillId);
+      } catch (e) {}
+
+      const modal = document.getElementById('recallBillsModal');
+      if (modal) modal.classList.add('hidden');
+
+      this.renderCart();
+      await this.updateHoldBillsBadge();
+      if (typeof SoundManager !== 'undefined' && SoundManager.playSuccessChime) {
+        SoundManager.playSuccessChime();
+      }
+
+      // If on mobile screen (< 768px), switch to cart segment so cashier sees the recalled items
+      if (window.innerWidth < 768) {
+        this.setMobilePosSegment('cart');
+      }
+    } catch (err) {
+      console.error('[POS] Error recalling bill:', err);
+      alert('Error loading held bill: ' + (err.message || err));
     }
-
-    this.cart = bill.cartItems;
-    this.pricingMode = bill.pricingMode || 'retail';
-    this.billDiscountType = bill.billDiscountType || 'fixed';
-    this.billDiscountValue = bill.billDiscountValue || 0;
-    this.updatePricingModeUI();
-
-    if (bill.customerId) {
-      this.selectedCustomer = await db.customers.get(bill.customerId);
-    } else {
-      this.selectedCustomer = null;
-    }
-
-    await db.holdBills.delete(holdBillId);
-    document.getElementById('recallBillsModal').classList.add('hidden');
-    this.renderCart();
-    await this.updateHoldBillsBadge();
-    SoundManager.playSuccessChime();
   },
 
   async deleteHoldBill(id) {
-    if (confirm('Delete this held bill permanently?')) {
-      await db.holdBills.delete(id);
+    if (!id) return;
+    if (confirm('Delete this held bill permanently? (මෙම බිල මකා දමන්නද?)')) {
+      try {
+        await db.holdBills.delete(id);
+      } catch (e) {
+        const allBills = await db.holdBills.toArray();
+        const found = allBills.find(b => String(b.id) === String(id));
+        if (found && found.id) await db.holdBills.delete(found.id);
+      }
       await this.openRecallBillsModal();
       await this.updateHoldBillsBadge();
     }
@@ -968,8 +1096,12 @@ const POSManager = {
           <div class="font-medium">${window.I18n && I18n.currentLang === 'si' ? 'ගැලපෙන භාණ්ඩ හමු නොවීය' : 'No matching products found'}</div>
         </div>
       `;
+      this.lastFilteredProducts = [];
       return;
     }
+
+    // Cache filtered list so Enter key can use it instantly (no extra DB call)
+    this.lastFilteredProducts = items;
 
     grid.innerHTML = items.map(p => {
       const isLow = p.currentStock <= p.minStock && p.currentStock > 0;
@@ -978,13 +1110,13 @@ const POSManager = {
 
       return `
         <div onclick="POSManager.addProductById(${p.id})"
-             class="group relative bg-slate-800/80 hover:bg-slate-750 border border-slate-700/80 hover:border-sky-500 rounded-2xl p-3 flex flex-col justify-between cursor-pointer transition-all duration-150 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-sky-950/40 select-none">
+             class="group relative bg-slate-800/80 hover:bg-slate-750 active:scale-[0.97] border border-slate-700/80 hover:border-sky-500 rounded-2xl p-2.5 sm:p-3 flex flex-col justify-between cursor-pointer transition-all duration-150 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-sky-950/40 select-none">
           <div>
             <div class="flex items-start justify-between gap-1 mb-1">
-              <span class="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-slate-700/80 text-slate-300">
+              <span class="text-[9px] sm:text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-slate-700/80 text-slate-300">
                 ${p.unit || 'pcs'}
               </span>
-              <span class="text-[10px] font-mono px-1.5 py-0.5 rounded font-bold ${
+              <span class="text-[9px] sm:text-[10px] font-mono px-1.5 py-0.5 rounded font-bold ${
                 isOut ? 'bg-rose-900/80 text-rose-300 border border-rose-700' :
                 isLow ? 'bg-amber-900/80 text-amber-300 border border-amber-700' :
                 'bg-emerald-950/80 text-emerald-300'
@@ -994,20 +1126,20 @@ const POSManager = {
             </div>
             <h4 class="font-bold text-slate-100 text-xs leading-snug group-hover:text-sky-300 transition line-clamp-2">
               ${p.name}
-              ${p.nameSi && p.nameSi !== p.name ? `<span class="text-[11px] text-sky-400 font-normal block mt-0.5 font-sans">(${p.nameSi})</span>` : ''}
+              ${p.nameSi && p.nameSi !== p.name ? `<span class="text-[10px] sm:text-[11px] text-sky-400 font-normal block mt-0.5 font-sans">(${p.nameSi})</span>` : ''}
             </h4>
-            <div class="text-[10px] text-slate-400 font-mono mt-0.5">${p.sku}</div>
+            <div class="text-[9px] sm:text-[10px] text-slate-400 font-mono mt-0.5">${p.sku}</div>
           </div>
           
-          <!-- Dual Price Box (Retail vs Wholesale) -->
-          <div class="mt-2.5 pt-2 border-t border-slate-700/60 flex items-center justify-between text-[11px] font-mono">
+          <!-- Price Box (Retail & Wholesale) -->
+          <div class="mt-2 pt-1.5 border-t border-slate-700/60 flex items-center justify-between text-[11px] font-mono">
             <div>
-              <span class="text-[10px] text-slate-400 block">${window.I18n ? I18n.t('retailTag') : 'Retail'}</span>
-              <span class="font-bold text-sky-400">${formatLKR(p.sellingPrice)}</span>
+              <span class="text-[9px] text-slate-400 block">${window.I18n ? I18n.t('retailTag') : 'Retail'}</span>
+              <span class="font-extrabold text-sky-400 text-xs sm:text-sm">${formatLKR(p.sellingPrice)}</span>
             </div>
             <div class="text-right">
-              <span class="text-[10px] text-amber-400/80 block">${window.I18n ? I18n.t('wholesaleTag') : 'Wholesale'}</span>
-              <span class="font-bold text-amber-300">${formatLKR(wsPrice)}</span>
+              <span class="text-[9px] text-amber-400/80 block">${window.I18n ? I18n.t('wholesaleTag') : 'Wholesale'}</span>
+              <span class="font-bold text-amber-300 text-[10px] sm:text-xs">${formatLKR(wsPrice)}</span>
             </div>
           </div>
         </div>
@@ -1230,7 +1362,7 @@ const POSManager = {
       }
       paidCash = 0;
       creditAmount = totals.grandTotal;
-      tender = totals.grandTotal;
+      tender = 0;
       changeAmount = 0;
     } else {
       // card or bank
@@ -1377,18 +1509,18 @@ const POSManager = {
 
       return `
         <tr style="border-bottom: 1px dashed #000;">
-          <td style="padding: 2.5px 0; vertical-align: top; text-align: left;">
-            <div style="font-weight: 800; color: #000; line-height: 1.25; font-size: 11px;">${idx + 1}. ${cleanItemName}</div>
-            ${isDiscounted ? `<div style="font-size: 9.5px; color: #000; font-weight: 700; text-decoration: line-through; margin-top: 0px;">MRP: ${mrp.toFixed(2)}</div>` : ''}
+          <td style="padding: 2px 0; vertical-align: top; text-align: left;">
+            <div style="font-weight: 600; color: #000; line-height: 1.25; font-size: 11px;">${idx + 1}. ${cleanItemName}</div>
+            ${isDiscounted ? `<div style="font-size: 9.5px; color: #000; font-weight: 600; text-decoration: line-through; margin-top: 0px;">MRP: ${mrp.toFixed(2)}</div>` : ''}
           </td>
-          <td style="padding: 2.5px 1px; vertical-align: top; text-align: center; white-space: nowrap; font-weight: 800; font-size: 11px;">
-            ${item.qty} <span style="font-size: 9.5px; color: #000; font-weight: 700;">${cleanUnit}</span>
+          <td style="padding: 2px 1px; vertical-align: top; text-align: center; white-space: nowrap; font-weight: 600; font-size: 11px;">
+            ${item.qty} <span style="font-size: 9.5px; color: #000; font-weight: 600;">${cleanUnit}</span>
           </td>
-          <td style="padding: 2.5px 1px; vertical-align: top; text-align: right; white-space: nowrap; font-weight: 800; font-size: 11px;">
+          <td style="padding: 2px 1px; vertical-align: top; text-align: right; white-space: nowrap; font-weight: 600; font-size: 11px;">
             <div>${Number(item.price || 0).toFixed(2)}</div>
-            ${itemDisc > 0 ? `<div style="font-size: 9.5px; font-weight: 900; color: #000;">-${itemDisc.toFixed(2)}</div>` : ''}
+            ${itemDisc > 0 ? `<div style="font-size: 9.5px; font-weight: 700; color: #000;">-${itemDisc.toFixed(2)}</div>` : ''}
           </td>
-          <td style="padding: 2.5px 3px 2.5px 0; vertical-align: top; text-align: right; white-space: nowrap; font-weight: 900; font-size: 11.5px;">
+          <td style="padding: 2px 3px 2px 0; vertical-align: top; text-align: right; white-space: nowrap; font-weight: 700; font-size: 11.5px;">
             ${Number(item.total || 0).toFixed(2)}
           </td>
         </tr>
@@ -1396,35 +1528,67 @@ const POSManager = {
     }).join('');
 
     let paymentHtml = '';
-    if (sale.paymentMethod === 'split' || (sale.creditAmount && sale.creditAmount > 0)) {
+    const creditAmt = Number(sale.creditAmount || 0);
+    const actualCashPaid = (sale.paidCash !== undefined && sale.paidCash !== null)
+      ? Number(sale.paidCash)
+      : (sale.paymentMethod === 'credit' ? 0
+        : (sale.paymentMethod === 'split' && creditAmt > 0)
+          ? Math.max(0, Number(sale.grandTotal || 0) - creditAmt)
+          : Number(sale.tenderedAmount || 0));
+
+    if (sale.paymentMethod === 'credit' || (creditAmt > 0 && actualCashPaid <= 0)) {
+      // 1. FULL STORE CREDIT SALE
       paymentHtml = `
-        <div style="display:flex; justify-content:space-between; padding-top:3px; font-weight: 800;">
+        <div style="display:flex; justify-content:space-between; padding-top:3px; font-weight: 700;">
+          <span style="text-transform:uppercase;">Method:</span>
+          <strong>CREDIT</strong>
+        </div>
+        <div style="display:flex; justify-content:space-between; font-weight: 600;">
+          <span>Cash Paid:</span>
+          <span>${formatLKR(0)}</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; font-weight: 700;">
+          <span>Added to Credit:</span>
+          <span>${formatLKR(creditAmt || sale.grandTotal)}</span>
+        </div>
+        ${sale.customerNewBalance !== undefined ? `
+          <div style="display:flex; justify-content:space-between; font-size:11px; font-weight:700; border-top:1px dashed #000; padding-top:2px; margin-top:2px;">
+            <span>Customer Total Due:</span>
+            <strong>${formatLKR(sale.customerNewBalance)}</strong>
+          </div>
+        ` : ''}
+      `;
+    } else if (sale.paymentMethod === 'split' || (creditAmt > 0 && actualCashPaid > 0)) {
+      // 2. SPLIT PAYMENT (Part Cash, Part Credit)
+      paymentHtml = `
+        <div style="display:flex; justify-content:space-between; padding-top:3px; font-weight: 700;">
           <span style="text-transform:uppercase;">Method:</span>
           <strong>SPLIT (Cash + Credit)</strong>
         </div>
-        <div style="display:flex; justify-content:space-between; font-weight: 800;">
+        <div style="display:flex; justify-content:space-between; font-weight: 700;">
           <span>Cash Paid:</span>
-          <span>${formatLKR(sale.paidCash || sale.tenderedAmount || 0)}</span>
+          <span>${formatLKR(actualCashPaid)}</span>
         </div>
-        <div style="display:flex; justify-content:space-between; font-weight: 800;">
+        <div style="display:flex; justify-content:space-between; font-weight: 700;">
           <span>Added to Credit:</span>
-          <span>${formatLKR(sale.creditAmount || 0)}</span>
+          <span>${formatLKR(creditAmt)}</span>
         </div>
         ${sale.customerNewBalance !== undefined ? `
-          <div style="display:flex; justify-content:space-between; font-size:11px; font-weight:800; border-top:1.5px dashed #000; padding-top:2px; margin-top:2px;">
+          <div style="display:flex; justify-content:space-between; font-size:11px; font-weight:700; border-top:1px dashed #000; padding-top:2px; margin-top:2px;">
             <span>Customer Total Due:</span>
             <strong>${formatLKR(sale.customerNewBalance)}</strong>
           </div>
         ` : ''}
       `;
     } else {
+      // 3. REGULAR PAYMENT (Cash, Card, QR)
       paymentHtml = `
-        <div style="display:flex; justify-content:space-between; padding-top:3px; font-weight: 800;">
+        <div style="display:flex; justify-content:space-between; padding-top:3px; font-weight: 700;">
           <span style="text-transform:uppercase;">Payment (${sale.paymentMethod || 'Cash'}):</span>
           <span>${formatLKR(sale.tenderedAmount || sale.grandTotal)}</span>
         </div>
         ${sale.paymentMethod === 'cash' ? `
-          <div style="display:flex; justify-content:space-between; font-weight: 800;">
+          <div style="display:flex; justify-content:space-between; font-weight: 600;">
             <span>Change Returned:</span>
             <span>${formatLKR(sale.changeAmount || 0)}</span>
           </div>
@@ -1434,20 +1598,20 @@ const POSManager = {
 
     return `
       <!-- Store Header -->
-      <div style="text-align: center; padding-bottom: 4px; border-bottom: 2px solid #000;">
-        ${storeLogo ? `<img src="${storeLogo}" style="max-height: 56px; max-width: 200px; display: block; margin: 0 auto 5px auto; object-fit: contain;" alt="Logo" />` : ''}
-        <h2 style="font-size: 16px; font-weight: 900; text-transform: uppercase; margin: 0; letter-spacing: 0.5px; color: #000;">${storeName}</h2>
-        ${storeBranch ? `<div style="font-size: 11px; font-weight: 700; color: #000; margin-top: 1px;">${storeBranch}</div>` : ''}
-        ${storeAddress ? `<div style="font-size: 11px; font-weight: 700; color: #000; line-height: 1.3;">${storeAddress}</div>` : ''}
-        ${storePhone ? `<div style="font-size: 11px; font-weight: 800; color: #000;">Tel: ${storePhone}</div>` : ''}
-        ${storeVat ? `<div style="font-size: 11px; font-weight: 800;">VAT Reg: ${storeVat}</div>` : ''}
+      <div style="text-align: center; padding-bottom: 4px; border-bottom: 1.5px solid #000;">
+        ${storeLogo ? `<img src="${storeLogo}" style="max-height: 52px; max-width: 180px; display: block; margin: 0 auto 4px auto; object-fit: contain;" alt="Logo" />` : ''}
+        <h2 style="font-size: 15px; font-weight: 700; text-transform: uppercase; margin: 0; letter-spacing: 0.5px; color: #000;">${storeName}</h2>
+        ${storeBranch ? `<div style="font-size: 11px; font-weight: 600; color: #000; margin-top: 1px;">${storeBranch}</div>` : ''}
+        ${storeAddress ? `<div style="font-size: 11px; font-weight: 600; color: #000; line-height: 1.3;">${storeAddress}</div>` : ''}
+        ${storePhone ? `<div style="font-size: 11px; font-weight: 600; color: #000;">Tel: ${storePhone}</div>` : ''}
+        ${storeVat ? `<div style="font-size: 11px; font-weight: 600;">VAT Reg: ${storeVat}</div>` : ''}
       </div>
 
       <!-- Invoice Details -->
-      <div style="padding: 4px 0; font-size: 11px; font-weight: 700; border-bottom: 2px solid #000; line-height: 1.35;">
+      <div style="padding: 3px 0; font-size: 11px; font-weight: 600; border-bottom: 1.5px solid #000; line-height: 1.35;">
         <div style="display: flex; justify-content: space-between;">
           <span>Invoice No:</span>
-          <strong style="font-weight: 900; font-size: 11.5px;">${sale.invoiceNo}</strong>
+          <strong style="font-weight: 700; font-size: 11.5px;">${sale.invoiceNo}</strong>
         </div>
         <div style="display: flex; justify-content: space-between;">
           <span>Date/Time:</span>
@@ -1464,14 +1628,14 @@ const POSManager = {
       </div>
 
       <!-- Items Table -->
-      <div style="padding: 2px 0; border-bottom: 2px solid #000;">
-        <table style="width: 100%; border-collapse: collapse; font-size: 11.5px; font-family: inherit;">
+      <div style="padding: 2px 0; border-bottom: 1.5px solid #000;">
+        <table style="width: 100%; border-collapse: collapse; font-size: 11px; font-family: inherit;">
           <thead>
-            <tr style="border-top: 2px solid #000; border-bottom: 2px solid #000; font-size: 11px; font-weight: 900; text-transform: uppercase;">
-              <th style="padding: 3px 0; text-align: left; width: 42%;"># ITEM</th>
-              <th style="padding: 3px 1px; text-align: center; width: 17%;">QTY</th>
-              <th style="padding: 3px 1px; text-align: right; width: 19%;">PRICE</th>
-              <th style="padding: 3px 3px 3px 0; text-align: right; width: 22%;">TOTAL</th>
+            <tr style="border-top: 1.5px solid #000; border-bottom: 1.5px solid #000; font-size: 10.5px; font-weight: 700; text-transform: uppercase;">
+              <th style="padding: 2.5px 0; text-align: left; width: 42%;"># ITEM</th>
+              <th style="padding: 2.5px 1px; text-align: center; width: 17%;">QTY</th>
+              <th style="padding: 2.5px 1px; text-align: right; width: 19%;">PRICE</th>
+              <th style="padding: 2.5px 3px 2.5px 0; text-align: right; width: 22%;">TOTAL</th>
             </tr>
           </thead>
           <tbody>
@@ -1481,38 +1645,38 @@ const POSManager = {
       </div>
 
       <!-- Financial Totals -->
-      <div style="padding-top: 4px; font-size: 11.5px; font-weight: 700; line-height: 1.35; padding-right: 3px;">
+      <div style="padding-top: 3px; font-size: 11px; font-weight: 600; line-height: 1.35; padding-right: 3px;">
         ${sale.subtotalMRP && sale.subtotalMRP > sale.grandTotal ? `
-          <div style="display: flex; justify-content: space-between; color: #000; font-weight: 700; padding: 1px 0;">
+          <div style="display: flex; justify-content: space-between; color: #000; font-weight: 600; padding: 1px 0;">
             <span>Subtotal (MRP Value):</span>
             <span style="text-decoration: line-through;">${formatLKR(sale.subtotalMRP)}</span>
           </div>
         ` : ''}
-        <div style="display: flex; justify-content: space-between; font-weight: 800; padding: 1px 0;">
+        <div style="display: flex; justify-content: space-between; font-weight: 600; padding: 1px 0;">
           <span>Subtotal:</span>
           <span>${formatLKR(sale.subtotal)}</span>
         </div>
         ${sale.totalDiscount > 0 ? `
-          <div style="display: flex; justify-content: space-between; font-weight: 900; padding: 1px 0;">
+          <div style="display: flex; justify-content: space-between; font-weight: 700; padding: 1px 0;">
             <span>Total Discount:</span>
             <span>-${formatLKR(sale.totalDiscount)}</span>
           </div>
         ` : ''}
         ${sale.tax > 0 ? `
-          <div style="display: flex; justify-content: space-between; font-weight: 800; padding: 1px 0;">
+          <div style="display: flex; justify-content: space-between; font-weight: 600; padding: 1px 0;">
             <span>Tax / VAT:</span>
             <span>${formatLKR(sale.tax)}</span>
           </div>
         ` : ''}
 
         <!-- GRAND TOTAL -->
-        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 15px; font-weight: 900; border-top: 2.5px solid #000; border-bottom: 2.5px solid #000; padding: 4px 1px; margin: 4px 0;">
+        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 14px; font-weight: 800; border-top: 2px solid #000; border-bottom: 2px solid #000; padding: 3px 1px; margin: 3px 0;">
           <span>GRAND TOTAL:</span>
-          <span style="font-size: 15px; font-weight: 900;">${formatLKR(sale.grandTotal)}</span>
+          <span style="font-size: 14px; font-weight: 800;">${formatLKR(sale.grandTotal)}</span>
         </div>
 
         ${sale.totalSavings && sale.totalSavings > 0 ? `
-          <div style="border: 2px solid #000; padding: 4px; margin: 5px 0; text-align: center; font-size: 12px; font-weight: 900; background: #fff;">
+          <div style="border: 1.5px solid #000; padding: 3px; margin: 4px 0; text-align: center; font-size: 11px; font-weight: 700; background: #fff;">
             ** YOU SAVED: ${formatLKR(sale.totalSavings)} **
           </div>
         ` : ''}
@@ -1521,9 +1685,12 @@ const POSManager = {
       </div>
 
       <!-- Footer & Barcode -->
-      <div style="text-align: center; padding-top: 4px; margin-top: 4px; border-top: 2px solid #000; font-size: 11px; font-weight: 800;">
-        ${receiptFooter ? `<div style="font-weight: 800; margin-bottom: 5px;">${receiptFooter}</div>` : ''}
-        ${barcodeDataUrl ? `<img src="${barcodeDataUrl}" style="max-height: 44px; display: block; margin: 5px auto 0 auto;" alt="Barcode" />` : ''}
+      <div style="text-align: center; padding-top: 3px; margin-top: 3px; border-top: 1.5px solid #000; font-size: 10.5px; font-weight: 600;">
+        ${receiptFooter ? `<div style="font-weight: 600; margin-bottom: 4px;">${receiptFooter}</div>` : ''}
+        ${barcodeDataUrl ? `<img src="${barcodeDataUrl}" style="max-height: 40px; display: block; margin: 4px auto 0 auto;" alt="Barcode" />` : ''}
+        <div style="font-size: 9px; font-weight: 700; margin-top: 4px; color: #000; letter-spacing: 0.3px; border-top: 0.5px dashed #000; padding-top: 3px;">
+          Powered by DSK POS | 078-5705966
+        </div>
       </div>
     `;
   },
@@ -1601,9 +1768,35 @@ const POSManager = {
     const barcodeDataUrl = settings.barcodeDataUrl || '';
     const thermalHtml = sale ? this.buildThermalReceiptHtml(sale, settings, barcodeDataUrl) : (document.getElementById('thermalReceiptPrintArea')?.innerHTML || '');
 
-    // Open dedicated high-resolution print window
+    // Detect mobile device — window.open() is blocked on mobile browsers
+    const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || window.innerWidth < 768;
+
+    if (isMobile) {
+      // Mobile: inject receipt into a full-screen print overlay and use window.print()
+      let overlay = document.getElementById('mobilePrintOverlay');
+      if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'mobilePrintOverlay';
+        overlay.style.cssText = 'position:fixed;inset:0;background:#fff;z-index:99999;overflow:auto;padding:8mm;display:flex;flex-direction:column;align-items:center;';
+        document.body.appendChild(overlay);
+      }
+      overlay.innerHTML = thermalHtml;
+      document.body.classList.add('printing-receipt');
+      setTimeout(() => {
+        window.print();
+        setTimeout(() => {
+          document.body.classList.remove('printing-receipt');
+          overlay.innerHTML = '';
+          overlay.style.display = 'none';
+        }, 1200);
+      }, 120);
+      return;
+    }
+
+    // Desktop: open dedicated high-resolution print window
     const printWin = window.open('', '_blank', 'width=380,height=600,top=100,left=100');
     if (!printWin) {
+      // Popup blocked even on desktop — fallback
       document.body.classList.add('printing-receipt');
       window.print();
       setTimeout(() => document.body.classList.remove('printing-receipt'), 1000);
@@ -1636,24 +1829,22 @@ const POSManager = {
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
     color: #000000 !important;
-    font-weight: 700 !important;
-    text-rendering: optimizeLegibility;
   }
   body {
     background: #ffffff;
     color: #000000 !important;
-    font-family: 'JetBrains Mono', 'Segoe UI Mono', monospace, 'Noto Sans Sinhala', sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans Sinhala", "Iskoola Pota", Arial, sans-serif;
     font-size: ${baseFontSize};
-    font-weight: 700;
-    line-height: 1.35;
+    font-weight: 600;
+    line-height: 1.3;
     width: ${receiptWidth};
     max-width: ${receiptWidth};
     margin: 0 auto;
-    padding: 2mm 3.5mm 6mm 2mm;
+    padding: 2mm 3mm 5mm 2mm;
     overflow-x: hidden;
   }
-  span, div, td, th, p, strong, h1, h2, h3 { color: #000000 !important; font-weight: inherit; }
-  strong, h1, h2, h3, th { font-weight: 900 !important; }
+  span, div, td, th, p, strong, h1, h2, h3 { color: #000000 !important; }
+  strong, h1, h2, h3, th { font-weight: 700 !important; }
   table { width: 100%; border-collapse: collapse; font-family: inherit; font-size: inherit; }
   th, td { font-family: inherit; font-size: inherit; }
   img { max-width: 100%; display: block; }
@@ -1666,8 +1857,8 @@ ${openScript}
     setTimeout(function() {
       window.focus();
       window.print();
-      setTimeout(function() { window.close(); }, 800);
-    }, 150);
+      setTimeout(function() { window.close(); }, 600);
+    }, 50);
   };
 ${closeScript}
 ${closeBody}
@@ -1714,7 +1905,7 @@ ${closeHtml}`);
       const dateStr = new Date(s.timestamp).toLocaleDateString();
       const timeStr = new Date(s.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       return `
-        <div onclick="POSManager.showSaleDetailsForReturn(${s.id})" class="p-2.5 bg-slate-900 hover:bg-slate-850 border border-slate-800 hover:border-sky-500/60 rounded-xl cursor-pointer transition">
+        <div onclick="POSManager.showSaleDetailsForReturn('${s.id}')" class="p-2.5 bg-slate-900 hover:bg-slate-850 border border-slate-800 hover:border-sky-500/60 rounded-xl cursor-pointer transition">
           <div class="flex items-center justify-between">
             <span class="font-mono font-bold text-sky-400 text-xs">${s.invoiceNo}</span>
             <span class="font-mono font-bold text-emerald-400 text-xs">${formatLKR(s.grandTotal)}</span>
@@ -1755,7 +1946,7 @@ ${closeHtml}`);
             <div class="text-[11px] text-slate-400">${dateStr} &bull; Cashier: <strong>${sale.cashierName || 'Cashier'}</strong></div>
             <div class="text-[11px] text-slate-400">Customer: <strong>${sale.customerName || 'Walk-in Customer'}</strong></div>
           </div>
-          <button onclick="POSManager.reprintPastReceipt(${sale.id})" class="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white font-bold rounded-xl text-xs transition flex items-center gap-1.5 shadow-md shadow-sky-600/30">
+          <button onclick="POSManager.reprintPastReceipt('${sale.id}')" class="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white font-bold rounded-xl text-xs transition flex items-center gap-1.5 shadow-md shadow-sky-600/30">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
             <span>Reprint Receipt</span>
           </button>
@@ -1785,7 +1976,7 @@ ${closeHtml}`);
                   <td class="py-2 text-right font-mono">${formatLKR(item.price)}</td>
                   <td class="py-2 text-right font-mono font-bold text-sky-400">${formatLKR(item.total)}</td>
                   <td class="py-2 text-center">
-                    <button onclick="POSManager.promptReturnItem(${sale.id}, ${item.id})" class="px-2 py-1 bg-amber-950/80 hover:bg-amber-900 border border-amber-700 text-amber-300 rounded-lg text-[11px] font-bold transition">
+                    <button onclick="POSManager.promptReturnItem('${sale.id}', '${item.id}')" class="px-2 py-1 bg-amber-950/80 hover:bg-amber-900 border border-amber-700 text-amber-300 rounded-lg text-[11px] font-bold transition">
                       🔄 Return
                     </button>
                   </td>

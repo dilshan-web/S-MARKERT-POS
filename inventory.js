@@ -172,6 +172,7 @@ const InventoryManager = {
             <button onclick="InventoryManager.openStockAdjustmentModal(${p.id})" class="p-1.5 bg-slate-800 hover:bg-amber-600 text-slate-300 hover:text-white rounded-lg transition" title="Adjust Stock">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/></svg>
             </button>
+            <button onclick="InventoryManager.openQuickStockModal(${p.id})" class="p-1.5 bg-slate-800 hover:bg-emerald-600 text-slate-300 hover:text-white rounded-lg transition" title="Quick Stock & Price Update">⚡</button>
             <button onclick="InventoryManager.openEditProductModal(${p.id})" class="p-1.5 bg-slate-800 hover:bg-sky-600 text-slate-300 hover:text-white rounded-lg transition" title="Edit Product">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
             </button>
@@ -198,11 +199,31 @@ const InventoryManager = {
     this.renderInventoryTable();
   },
 
+  onAddStockChange() {
+    const currentVal = parseFloat(document.getElementById('prodCurrentStockInput')?.value) || 0;
+    const addedInput = document.getElementById('prodAddStockInput');
+    const addedVal = parseFloat(addedInput?.value) || 0;
+    const previewContainer = document.getElementById('newTotalStockPreview');
+    const previewVal = document.getElementById('previewTotalStockVal');
+
+    if (addedInput && addedInput.value.trim() !== '' && !isNaN(addedVal)) {
+      const total = Math.round((currentVal + addedVal) * 100) / 100;
+      if (previewVal) previewVal.textContent = total.toFixed(2);
+      if (previewContainer) previewContainer.classList.remove('hidden');
+    } else {
+      if (previewContainer) previewContainer.classList.add('hidden');
+    }
+  },
+
   openAddProductModal() {
     document.getElementById('productModalTitle').textContent = I18n.currentLang === 'si' ? 'අලුත් භාණ්ඩයක් ඇතුළත් කිරීම' : (I18n.currentLang === 'bi' ? 'අලුත් භාණ්ඩයක් (Add New Product)' : 'Add New Product');
     document.getElementById('productForm').reset();
     document.getElementById('prodIdInput').value = '';
     document.getElementById('prodNameSiInput').value = '';
+    const addStockInput = document.getElementById('prodAddStockInput');
+    if (addStockInput) addStockInput.value = '';
+    const previewContainer = document.getElementById('newTotalStockPreview');
+    if (previewContainer) previewContainer.classList.add('hidden');
     const markedPriceInput = document.getElementById('prodMarkedPriceInput');
     if (markedPriceInput) markedPriceInput.value = '';
     document.getElementById('productModal').classList.remove('hidden');
@@ -228,6 +249,10 @@ const InventoryManager = {
     document.getElementById('prodWholesalePriceInput').value = product.wholesalePrice || product.sellingPrice || 0;
     document.getElementById('prodMinStockInput').value = product.minStock || 5;
     document.getElementById('prodCurrentStockInput').value = product.currentStock || 0;
+    const addStockInput = document.getElementById('prodAddStockInput');
+    if (addStockInput) addStockInput.value = '';
+    const previewContainer = document.getElementById('newTotalStockPreview');
+    if (previewContainer) previewContainer.classList.add('hidden');
     document.getElementById('prodExpiryDateInput').value = product.expiryDate || '';
     document.getElementById('prodBatchInput').value = product.batchNumber || '';
     document.getElementById('prodSupplierInput').value = product.supplierId || '';
@@ -247,6 +272,10 @@ const InventoryManager = {
     const sellingPriceVal = parseFloat(document.getElementById('prodSellingPriceInput').value) || 0;
     const markedPriceVal = parseFloat(document.getElementById('prodMarkedPriceInput')?.value) || sellingPriceVal;
 
+    const baseStock = parseFloat(document.getElementById('prodCurrentStockInput').value) || 0;
+    const addedStock = parseFloat(document.getElementById('prodAddStockInput')?.value) || 0;
+    const finalStock = Math.round((baseStock + addedStock) * 100) / 100;
+
     const productData = {
       name: nameVal,
       nameSi: nameSiVal || nameVal,
@@ -260,7 +289,7 @@ const InventoryManager = {
       sellingPrice: sellingPriceVal,
       wholesalePrice: parseFloat(document.getElementById('prodWholesalePriceInput').value) || sellingPriceVal,
       minStock: parseFloat(document.getElementById('prodMinStockInput').value) || 0,
-      currentStock: parseFloat(document.getElementById('prodCurrentStockInput').value) || 0,
+      currentStock: finalStock,
       expiryDate: document.getElementById('prodExpiryDateInput').value || null,
       batchNumber: document.getElementById('prodBatchInput').value.trim(),
       supplierId: parseInt(document.getElementById('prodSupplierInput').value) || null
@@ -269,6 +298,21 @@ const InventoryManager = {
     const performSave = async () => {
       if (id) {
         await db.products.update(parseInt(id), productData);
+        if (addedStock !== 0) {
+          try {
+            await db.stockAdjustments.add({
+              productId: parseInt(id),
+              productName: nameVal,
+              type: addedStock > 0 ? 'in' : 'out',
+              quantity: Math.abs(addedStock),
+              reason: `Manual Stock Intake (+${addedStock})`,
+              adjustedBy: AuthManager.currentUser?.name || 'Staff',
+              timestamp: new Date().toISOString()
+            });
+          } catch (e) {
+            console.warn('Failed to log stock adjustment audit:', e);
+          }
+        }
       } else {
         await db.products.add(productData);
       }
@@ -457,7 +501,158 @@ const InventoryManager = {
     setTimeout(() => {
       document.body.classList.remove('printing-barcodes');
     }, 1000);
-  }
+  },
+  async openQuickStockModal(productId) {
+    let product = null;
+    if (productId) {
+      product = await db.products.get(productId);
+    }
+    const modal = document.getElementById('quickStockModal');
+    if (!modal) return;
+
+    const idInput = document.getElementById('quickStockProductId');
+    const nameEl = document.getElementById('quickStockProductName');
+    const currEl = document.getElementById('quickStockCurrentDisplay');
+    const addInput = document.getElementById('quickStockAddInput');
+    const retailInput = document.getElementById('quickStockRetailInput');
+    const wholesaleInput = document.getElementById('quickStockWholesaleInput');
+    const costInput = document.getElementById('quickStockCostInput');
+    const previewContainer = document.getElementById('quickStockNewTotalPreview');
+    const searchInput = document.getElementById('quickStockSearchInput');
+
+    if (searchInput) searchInput.value = '';
+    const searchResults = document.getElementById('quickStockSearchResults');
+    if (searchResults) { searchResults.innerHTML = ''; searchResults.classList.add('hidden'); }
+
+    if (product) {
+      if (idInput) idInput.value = product.id;
+      if (nameEl) nameEl.textContent = `${product.name} (${product.sku})`;
+      if (currEl) currEl.textContent = `${product.currentStock || 0} ${product.unit || 'unit'}`;
+      if (addInput) addInput.value = '';
+      if (retailInput) retailInput.value = product.sellingPrice || 0;
+      if (wholesaleInput) wholesaleInput.value = product.wholesalePrice || product.sellingPrice || 0;
+      if (costInput) costInput.value = product.costPrice || 0;
+      if (previewContainer) previewContainer.classList.add('hidden');
+    } else {
+      if (idInput) idInput.value = '';
+      if (nameEl) nameEl.textContent = 'Please search a product...';
+      if (currEl) currEl.textContent = '0';
+      if (addInput) addInput.value = '';
+      if (retailInput) retailInput.value = '';
+      if (wholesaleInput) wholesaleInput.value = '';
+      if (costInput) costInput.value = '';
+      if (previewContainer) previewContainer.classList.add('hidden');
+    }
+    modal.classList.remove('hidden');
+    if (searchInput && !product) searchInput.focus();
+    else if (addInput) addInput.focus();
+  },
+
+  async searchQuickStockProduct(query) {
+    const resultsBox = document.getElementById('quickStockSearchResults');
+    if (!resultsBox) return;
+    const q = (query || '').trim().toLowerCase();
+    if (!q) {
+      resultsBox.innerHTML = '';
+      resultsBox.classList.add('hidden');
+      return;
+    }
+    const all = await db.products.toArray();
+    const matches = all.filter(p =>
+      p.sku.toLowerCase().includes(q) ||
+      p.name.toLowerCase().includes(q) ||
+      (p.nameSi && p.nameSi.toLowerCase().includes(q)) ||
+      (p.barcodes && p.barcodes.some(b => b.toLowerCase().includes(q)))
+    ).slice(0, 8);
+
+    if (matches.length === 0) {
+      resultsBox.innerHTML = `<div class="p-2.5 text-center text-slate-400 text-xs">No products found</div>`;
+      resultsBox.classList.remove('hidden');
+      return;
+    }
+
+    resultsBox.innerHTML = matches.map(p => `
+      <div onclick="InventoryManager.openQuickStockModal(${p.id})" class="p-2 hover:bg-slate-800 rounded-lg cursor-pointer flex items-center justify-between text-xs border-b border-slate-800 last:border-none">
+        <div>
+          <span class="font-bold text-white">${p.name}</span>
+          <span class="text-[10px] text-sky-400 font-mono ml-1.5">[${p.sku}]</span>
+        </div>
+        <div class="text-right">
+          <div class="text-[11px] font-mono text-emerald-400 font-bold">Stock: ${p.currentStock || 0} ${p.unit || ''}</div>
+          <div class="text-[10px] text-slate-400">${formatLKR(p.sellingPrice)}</div>
+        </div>
+      </div>
+    `).join('');
+    resultsBox.classList.remove('hidden');
+  },
+
+  onQuickStockChange() {
+    const currEl = document.getElementById('quickStockCurrentDisplay');
+    const addInput = document.getElementById('quickStockAddInput');
+    const addedVal = parseFloat(addInput?.value) || 0;
+    const previewContainer = document.getElementById('quickStockNewTotalPreview');
+    const previewVal = document.getElementById('quickStockNewTotalVal');
+
+    const currVal = parseFloat(currEl?.textContent) || 0;
+    if (addInput && addInput.value.trim() !== '' && !isNaN(addedVal)) {
+      const total = Math.round((currVal + addedVal) * 100) / 100;
+      if (previewVal) previewVal.textContent = total.toFixed(2);
+      if (previewContainer) previewContainer.classList.remove('hidden');
+    } else {
+      if (previewContainer) previewContainer.classList.add('hidden');
+    }
+  },
+
+  async saveQuickStockUpdate() {
+    const id = parseInt(document.getElementById('quickStockProductId')?.value);
+    if (!id || isNaN(id)) {
+      alert('කරුණාකර යාවත්කාලීන කිරීමට භාණ්ඩයක් තෝරන්න (Please select a product first).');
+      return;
+    }
+    const product = await db.products.get(id);
+    if (!product) {
+      alert('Product not found in database.');
+      return;
+    }
+
+    const addStockVal = parseFloat(document.getElementById('quickStockAddInput')?.value) || 0;
+    const retailVal = parseFloat(document.getElementById('quickStockRetailInput')?.value);
+    const wholesaleVal = parseFloat(document.getElementById('quickStockWholesaleInput')?.value);
+    const costVal = parseFloat(document.getElementById('quickStockCostInput')?.value);
+
+    const oldStock = Number(product.currentStock || 0);
+    const newStock = Math.round((oldStock + addStockVal) * 100) / 100;
+
+    const updates = {
+      currentStock: newStock
+    };
+
+    if (!isNaN(retailVal) && retailVal > 0) updates.sellingPrice = retailVal;
+    if (!isNaN(wholesaleVal) && wholesaleVal > 0) updates.wholesalePrice = wholesaleVal;
+    if (!isNaN(costVal) && costVal > 0) updates.costPrice = costVal;
+
+    await db.products.update(id, updates);
+
+    if (addStockVal !== 0) {
+      try {
+        await db.stockAdjustments.add({
+          productId: id,
+          productName: product.name,
+          type: addStockVal > 0 ? 'in' : 'out',
+          quantity: Math.abs(addStockVal),
+          reason: `Quick Stock Update (+${addStockVal})`,
+          adjustedBy: (window.AuthManager && AuthManager.currentUser) ? AuthManager.currentUser.name : 'Staff',
+          timestamp: new Date().toISOString()
+        });
+      } catch (e) {}
+    }
+
+    document.getElementById('quickStockModal')?.classList.add('hidden');
+    await this.renderInventoryTable();
+    await this.renderValuationCards();
+    if (window.SoundManager) SoundManager.playSuccessChime();
+    alert(`"${product.name}" තොග සහ මිල ගණන් සාර්ථකව යාවත්කාලීන විය! (Updated successfully)`);
+  },
 };
 
 window.InventoryManager = InventoryManager;

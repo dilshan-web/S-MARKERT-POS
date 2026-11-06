@@ -46,6 +46,7 @@ const CustomerManager = {
         <td class="p-3">
           <div class="font-bold text-slate-100 text-sm">${c.name}</div>
           <div class="text-slate-400 text-[11px]">${c.email || c.address || 'No address/email'}</div>
+          ${(c.openingBalance || 0) > 0 ? `<div class="text-[10px] text-amber-500/80 font-mono mt-0.5">Opening: ${formatLKR(c.openingBalance)}</div>` : ''}
         </td>
         <td class="p-3 font-mono font-semibold text-sky-400">${c.phone}</td>
         <td class="p-3 text-right font-mono">
@@ -287,6 +288,17 @@ const CustomerManager = {
     document.getElementById('customerModalTitle').textContent = 'Register New Customer';
     document.getElementById('customerForm').reset();
     document.getElementById('custIdInput').value = '';
+
+    // Show opening balance field, hide current credit row
+    const openingRow = document.getElementById('custOpeningBalanceInput');
+    const currentRow = document.getElementById('custCurrentCreditRow');
+    if (openingRow) openingRow.closest('div').classList.remove('hidden');
+    if (currentRow) currentRow.classList.add('hidden');
+
+    // Reset opening balance
+    const ob = document.getElementById('custOpeningBalanceInput');
+    if (ob) ob.value = '0';
+
     document.getElementById('customerModal').classList.remove('hidden');
   },
 
@@ -299,7 +311,18 @@ const CustomerManager = {
     document.getElementById('custPhoneInput').value = cust.phone;
     document.getElementById('custNameInput').value = cust.name;
     document.getElementById('custEmailInput').value = cust.email || '';
-    document.getElementById('custCreditInput').value = cust.creditBalance || 0;
+
+    // Opening balance field — show old opening balance for editing
+    const ob = document.getElementById('custOpeningBalanceInput');
+    if (ob) ob.value = cust.openingBalance || 0;
+
+    // Show current live balance as read-only info
+    const currentRow = document.getElementById('custCurrentCreditRow');
+    const currentDisplay = document.getElementById('custCurrentCreditDisplay');
+    const hiddenCredit = document.getElementById('custCreditInput');
+    if (currentRow) currentRow.classList.remove('hidden');
+    if (currentDisplay) currentDisplay.textContent = formatLKR(cust.creditBalance || 0);
+    if (hiddenCredit) hiddenCredit.value = cust.creditBalance || 0;
 
     document.getElementById('customerModal').classList.remove('hidden');
   },
@@ -310,20 +333,36 @@ const CustomerManager = {
     const phone = document.getElementById('custPhoneInput').value.trim();
     const name = document.getElementById('custNameInput').value.trim();
     const email = document.getElementById('custEmailInput').value.trim();
-    const credit = parseFloat(document.getElementById('custCreditInput').value) || 0;
+    const openingBalance = parseFloat(document.getElementById('custOpeningBalanceInput')?.value) || 0;
+    const existingCredit = parseFloat(document.getElementById('custCreditInput')?.value) || 0;
 
     const performSave = async () => {
-      const custData = { phone, name, email, creditBalance: credit };
-
       if (id) {
-        await db.customers.update(parseInt(id), custData);
+        // EDIT: adjust outstanding by delta of opening balance change
+        const existingCust = await db.customers.get(parseInt(id));
+        const oldOpening = existingCust ? (existingCust.openingBalance || 0) : 0;
+        const oldCredit = existingCust ? (existingCust.creditBalance || 0) : 0;
+        const delta = openingBalance - oldOpening;
+        const newCredit = Math.max(0, oldCredit + delta);
+
+        await db.customers.update(parseInt(id), {
+          phone, name, email,
+          openingBalance,
+          creditBalance: newCredit
+        });
       } else {
+        // NEW: check phone duplicate
         const existing = await db.customers.where('phone').equals(phone).first();
         if (existing) {
           alert('A customer with this phone number already exists!');
           return;
         }
-        custData.totalSpent = 0;
+        const custData = {
+          phone, name, email,
+          openingBalance,
+          creditBalance: openingBalance, // start with opening balance
+          totalSpent: 0
+        };
         const newId = await db.customers.add(custData);
         const isFromPos = !document.getElementById('posCustomerModal').classList.contains('hidden');
         if (isFromPos) {
@@ -339,12 +378,14 @@ const CustomerManager = {
       SoundManager.playSuccessChime();
     };
 
+    // If editing and opening balance changed — require admin auth
     if (id) {
       const existingCust = await db.customers.get(parseInt(id));
-      if (existingCust && existingCust.creditBalance !== credit) {
+      const oldOpening = existingCust ? (existingCust.openingBalance || 0) : 0;
+      if (existingCust && openingBalance !== oldOpening) {
         AuthManager.requireAdminAuth({
-          actionName: 'Modify Customer Credit Balance',
-          actionDesc: `Change credit balance for "${existingCust.name}" from ${formatLKR(existingCust.creditBalance || 0)} to ${formatLKR(credit)}`,
+          actionName: 'Modify Customer Opening Balance',
+          actionDesc: `Change opening balance for "${existingCust.name}" from ${formatLKR(oldOpening)} to ${formatLKR(openingBalance)}. This will adjust the live credit balance.`,
           requiredPerm: 'allowCreditEdit',
           onAuthorized: () => performSave()
         });

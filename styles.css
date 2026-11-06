@@ -117,40 +117,44 @@ input[type=number] {
 
   /* 1. Thermal Receipt Print Mode */
   body.printing-receipt #thermalReceiptPrintArea,
-  body.printing-receipt #thermalReceiptPrintArea * {
+  body.printing-receipt #thermalReceiptPrintArea *,
+  body.printing-receipt #mobilePrintOverlay,
+  body.printing-receipt #mobilePrintOverlay * {
     visibility: visible;
   }
 
-  body.printing-receipt #thermalReceiptPrintArea {
+  body.printing-receipt #thermalReceiptPrintArea,
+  body.printing-receipt #mobilePrintOverlay {
     position: absolute;
     left: 0;
     top: 0;
-    width: 80mm;
-    max-width: 80mm;
-    padding: 2mm 3mm;
+    width: 70mm;
+    max-width: 70mm;
+    padding: 2mm 3mm 5mm 2mm;
     margin: 0 auto;
-    font-family: 'JetBrains Mono', 'Segoe UI Mono', 'Noto Sans Sinhala', monospace, sans-serif;
-    font-size: 11.5px;
-    font-weight: 700;
-    line-height: 1.35;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans Sinhala", "Iskoola Pota", Arial, sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.3;
     color: #000000 !important;
     background: #ffffff;
     display: block !important;
+    overflow-x: hidden;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
   }
 
-  body.printing-receipt #thermalReceiptPrintArea * {
-    font-weight: 700 !important;
+  body.printing-receipt #thermalReceiptPrintArea *,
+  body.printing-receipt #mobilePrintOverlay * {
     color: #000000 !important;
   }
 
   body.printing-receipt.printer-58mm #thermalReceiptPrintArea {
-    width: 58mm;
-    max-width: 58mm;
-    padding: 1mm 1.5mm;
+    width: 48mm;
+    max-width: 48mm;
+    padding: 1mm 2.5mm;
     font-size: 10px;
-    font-weight: 700;
+    font-weight: 600;
   }
 
   /* 2. Barcode Sticker Print Mode */
@@ -261,6 +265,13 @@ input[type=number] {
 
 /* Mobile Phones Only (< 768px) */
 @media screen and (max-width: 767px) {
+  html, body {
+    width: 100% !important;
+    max-width: 100vw !important;
+    overflow-x: hidden !important;
+    height: 100dvh !important;
+  }
+
   /* Prevent iOS Safari input auto-zoom */
   input, select, textarea {
     font-size: 16px !important;
@@ -269,6 +280,8 @@ input[type=number] {
   /* Ensure main view has padding above bottom mobile navigation bar */
   #appShell main {
     padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px)) !important;
+    max-width: 100vw !important;
+    overflow-x: hidden !important;
   }
 
   /* Mobile Bottom Navigation Bar */
@@ -292,14 +305,43 @@ input[type=number] {
     display: none !important;
   }
 
+  /* Mobile Segment Pane Switching */
+  body.mobile-pos-cart-active #posRightProductsPane {
+    display: none !important;
+  }
+  body.mobile-pos-cart-active #posLeftCartPane {
+    display: flex !important;
+    width: 100% !important;
+  }
+  body.mobile-pos-products-active #posLeftCartPane {
+    display: none !important;
+  }
+  body.mobile-pos-products-active #posRightProductsPane {
+    display: flex !important;
+    width: 100% !important;
+  }
+
   /* Floating Bottom Checkout Action Bar for Mobile POS Terminal */
   .mobile-floating-checkout {
     position: fixed;
     bottom: calc(66px + env(safe-area-inset-bottom, 0px));
-    left: 12px;
-    right: 12px;
+    left: 10px;
+    right: 10px;
     z-index: 40;
     box-shadow: 0 10px 25px -5px rgba(2, 132, 199, 0.4), 0 8px 10px -6px rgba(2, 132, 199, 0.3);
+  }
+
+  /* Extra bottom padding in products grid so floating checkout bar doesn't cover last products */
+  #posProductGrid {
+    padding-bottom: 84px !important;
+    gap: 8px !important;
+  }
+
+  /* Full screen touch-friendly modals on phones */
+  .app-modal > div {
+    max-height: 94vh !important;
+    width: 96% !important;
+    margin: auto !important;
   }
 }
 

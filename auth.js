@@ -149,7 +149,7 @@ const AuthManager = {
         isLifetime: true,
         permissions: {
           dashboard: true, pos: true, inventory: true, grn: true,
-          customers: true, credit: true, suppliers: true, expenses: true,
+          customers: true, credit: true, suppliers: true, farmers: true, expenses: true,
           shifts: true, reports: true, settings: true, users: true,
           allowCreditEdit: true, allowCreditDelete: true, allowPriceEdit: true,
           allowDiscount: true, allowReturns: true, allowDelete: true,
@@ -168,7 +168,7 @@ const AuthManager = {
         adminId: 1,
         permissions: {
           dashboard: true, pos: true, inventory: true, grn: true,
-          customers: true, credit: true, suppliers: true, expenses: true,
+          customers: true, credit: true, suppliers: true, farmers: true, expenses: true,
           shifts: true, reports: true, settings: true, users: false,
           allowCreditEdit: true, allowCreditDelete: false, allowPriceEdit: true,
           allowDiscount: true, allowReturns: true, allowDelete: false,
@@ -188,7 +188,7 @@ const AuthManager = {
         adminId: 1,
         permissions: {
           dashboard: true, pos: true, inventory: false, grn: false,
-          customers: true, credit: true, suppliers: false, expenses: false,
+          customers: true, credit: true, suppliers: false, farmers: false, expenses: false,
           shifts: true, reports: false, settings: false, users: false,
           allowCreditEdit: false, allowCreditDelete: false, allowPriceEdit: false,
           allowDiscount: false, allowReturns: false, allowDelete: false,
@@ -415,7 +415,7 @@ const AuthManager = {
     }
 
     if (this.currentUser.role === 'manager') {
-      const allowedForManager = ['dashboard', 'pos', 'inventory', 'grn', 'customers', 'credit', 'suppliers', 'expenses', 'shifts', 'reports', 'allowDiscount', 'settings'];
+      const allowedForManager = ['dashboard', 'pos', 'inventory', 'grn', 'customers', 'credit', 'suppliers', 'farmers', 'expenses', 'shifts', 'reports', 'allowDiscount', 'settings'];
       return allowedForManager.includes(permKey);
     }
 
@@ -710,7 +710,7 @@ const AuthManager = {
       if (role === 'admin') {
         cb.checked = true;
       } else if (role === 'manager') {
-        const managerAllowed = ['dashboard', 'pos', 'inventory', 'grn', 'customers', 'credit', 'suppliers', 'expenses', 'shifts', 'reports', 'allowDiscount'];
+        const managerAllowed = ['dashboard', 'pos', 'inventory', 'grn', 'customers', 'credit', 'suppliers', 'farmers', 'expenses', 'shifts', 'reports', 'allowDiscount'];
         cb.checked = managerAllowed.includes(permKey);
       } else {
         const cashierAllowed = ['dashboard', 'pos', 'customers', 'credit', 'shifts'];

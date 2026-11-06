@@ -21,6 +21,9 @@ const COLLECTION_NAMES = [
   'categories',
   'customers',
   'suppliers',
+  'farmers',
+  'farmerIntakes',
+  'farmerPayments',
   'sales',
   'saleItems',
   'returns',
@@ -217,6 +220,12 @@ const triggerRealtimeUIUpdate = (function() {
           if (window.SupplierManager) SupplierManager.renderSupplierTable().catch(() => {});
           if (window.InventoryManager) InventoryManager.populateSupplierDropdown().catch(() => {});
           if (window.GRNManager) GRNManager.loadSuppliers().catch(() => {});
+        }
+
+        if (updates.has('farmers') || updates.has('farmerIntakes') || updates.has('farmerPayments')) {
+          if (window.FarmerManager) {
+            FarmerManager.renderAll().catch(() => {});
+          }
         }
 
         if (updates.has('expenses')) {
@@ -595,7 +604,7 @@ class FirestoreCollection {
     if (!docId) {
       if (this.name === 'settings' && docData.key) {
         docId = String(docData.key);
-      } else if (['users', 'products', 'categories', 'customers', 'suppliers'].includes(this.name)) {
+      } else if (['users', 'products', 'categories', 'customers', 'suppliers', 'farmers', 'farmerIntakes', 'farmerPayments'].includes(this.name)) {
         let maxId = 0;
         for (const item of this.docsMap.values()) {
           const numId = Number(item.id);
@@ -1007,6 +1016,7 @@ async function seedDatabaseIfEmpty() {
     customers: true,
     credit: true,
     suppliers: true,
+    farmers: true,
     expenses: true,
     shifts: true,
     reports: true,
@@ -1029,6 +1039,7 @@ async function seedDatabaseIfEmpty() {
     customers: true,
     credit: true,
     suppliers: true,
+    farmers: true,
     expenses: true,
     shifts: true,
     reports: true,
@@ -1051,6 +1062,7 @@ async function seedDatabaseIfEmpty() {
     customers: true,
     credit: true,
     suppliers: false,
+    farmers: false,
     expenses: false,
     shifts: true,
     reports: false,
@@ -1180,6 +1192,15 @@ async function seedDatabaseIfEmpty() {
     await db.vouchers.bulkAdd([
       { id: 1, code: 'MEGA10', discountType: 'percent', discountValue: 10, minBill: 2000, expiryDate: '2027-12-31', active: 1, description: '10% Off on orders above Rs. 2,000' },
       { id: 2, code: 'SAVE500', discountType: 'fixed', discountValue: 500, minBill: 5000, expiryDate: '2027-12-31', active: 1, description: 'Rs. 500 Flat Off on orders above Rs. 5,000' }
+    ]);
+  }
+
+  // 6b. Seed Farmers if empty
+  const farmerCount = await db.farmers.count();
+  if (farmerCount === 0) {
+    await db.farmers.bulkAdd([
+      { id: 1, name: 'K. G. Gunapala (කේ. ජී. ගුණපාල - වැලිමඩ)', phone: '0772345678', address: 'Welimada / වැලිමඩ', outstandingBalance: 0, totalSupplied: 0, totalPaid: 0 },
+      { id: 2, name: 'Sunil Shantha (සුනිල් ශාන්ත - නුවරඑළිය)', phone: '0714567890', address: 'Nuwara Eliya / නුවරඑළිය', outstandingBalance: 0, totalSupplied: 0, totalPaid: 0 }
     ]);
   }
 

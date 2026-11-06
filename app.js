@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Central App Router, Scanner Wedge, Camera Scanner, Hotkeys & PWA Service Worker
  */
 
@@ -129,6 +129,7 @@ const App = {
       else if (tabName === 'customers' && window.CustomerManager) CustomerManager.init();
       else if (tabName === 'credit' && window.CustomerManager) CustomerManager.initCreditTab();
       else if (tabName === 'suppliers' && window.SupplierManager) SupplierManager.init();
+      else if (tabName === 'farmers' && window.FarmerManager) FarmerManager.init();
       else if (tabName === 'expenses' && window.ExpenseManager) ExpenseManager.init();
       else if (tabName === 'shifts' && window.ShiftManager) ShiftManager.init();
       else if (tabName === 'reports' && window.ReportsManager) ReportsManager.init();
@@ -139,6 +140,7 @@ const App = {
         }
       }
       else if (tabName === 'pos' && window.POSManager) {
+        POSManager.handleWindowResize();
         POSManager.renderCategoryFilter();
         POSManager.renderProductGrid();
         POSManager.renderCart();
@@ -534,9 +536,13 @@ window.quickFillLogin = async function(u, p) {
   }
 };
 
-window.handleLoginFormSubmit = function(e) {
-  return App.handleLogin(e);
-};
+// Only set handleLoginFormSubmit if not already defined by the head inline script
+// (the head script handles Company Controller routing properly)
+if (!window.handleLoginFormSubmit) {
+  window.handleLoginFormSubmit = function(e) {
+    return App.handleLogin(e);
+  };
+}
 
 if (document.readyState === 'loading') {
   window.addEventListener('DOMContentLoaded', () => {
