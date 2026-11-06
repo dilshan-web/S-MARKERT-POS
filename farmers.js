@@ -1838,4 +1838,15 @@ if (typeof document !== 'undefined') {
   });
 }
 
+// ── Alias fixes: HTML calls these short names but functions have longer names ──
+FarmerManager.saveDailyIntake = function(event) {
+  return FarmerManager.saveFarmerIntake(event);
+};
+FarmerManager.onVegSearchInput = function(query) {
+  return FarmerManager.onVegetableSearchInput(query);
+};
+FarmerManager.onVegSearchKeydown = function(event) {
+  return FarmerManager.onVegetableSearchKeydown(event);
+};
+
 window.FarmerManager = FarmerManager;
