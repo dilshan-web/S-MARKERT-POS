@@ -1185,19 +1185,19 @@ const FarmerManager = {
           </td>
           <td class="p-3 text-right space-x-1.5 whitespace-nowrap">
             ${bal > 0 ? `
-              <button onclick="FarmerManager.openPaymentModal(${f.id})" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition shadow-md shadow-emerald-600/20 inline-flex items-center gap-1 cursor-pointer">
+              <button type="button" onclick="FarmerManager.openPaymentModal(${f.id})" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition shadow-md shadow-emerald-600/20 inline-flex items-center gap-1 cursor-pointer">
                 <span>💵</span> <span>මුදල් ගෙවන්න</span>
               </button>
             ` : `
               <span class="px-2 py-1 bg-slate-800 text-emerald-400 rounded-lg text-[11px] font-bold">ගෙවා නිමයි</span>
             `}
-            <button onclick="FarmerManager.openStatementModal(${f.id})" class="p-1.5 bg-slate-800 hover:bg-sky-600 text-slate-300 hover:text-white rounded-lg transition cursor-pointer" title="ගිණුම් ඉතිහාසය (Statement)">
+            <button type="button" onclick="FarmerManager.openStatementModal(${f.id})" class="p-1.5 bg-slate-800 hover:bg-sky-600 text-slate-300 hover:text-white rounded-lg transition cursor-pointer" title="ගිණුම් ඉතිහාසය (Statement)">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
             </button>
-            <button onclick="FarmerManager.openFarmerModal(${f.id})" class="p-1.5 bg-slate-800 hover:bg-amber-600 text-slate-300 hover:text-white rounded-lg transition cursor-pointer" title="සංස්කරණය (Edit)">
+            <button type="button" onclick="FarmerManager.openFarmerModal(${f.id})" class="p-1.5 bg-slate-800 hover:bg-amber-600 text-slate-300 hover:text-white rounded-lg transition cursor-pointer" title="සංස්කරණය (Edit)">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
             </button>
-            <button onclick="FarmerManager.deleteFarmer(${f.id})" class="p-1.5 bg-slate-800 hover:bg-rose-600 text-slate-300 hover:text-white rounded-lg transition cursor-pointer" title="මකන්න (Delete)">
+            <button type="button" onclick="FarmerManager.deleteFarmer(${f.id})" class="p-1.5 bg-slate-800 hover:bg-rose-600 text-slate-300 hover:text-white rounded-lg transition cursor-pointer" title="මකන්න (Delete)">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
             </button>
           </td>
@@ -1393,11 +1393,11 @@ const FarmerManager = {
           <td class="p-3 text-center">${statusBadge}</td>
           <td class="p-3 text-right space-x-1 whitespace-nowrap">
             ${Number(i.balanceAmount) > 0 ? `
-              <button onclick="FarmerManager.openPaymentModal(${i.farmerId}, '${i.id}')" class="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition" title="මුදල් ගෙවන්න">
+              <button type="button" onclick="FarmerManager.openPaymentModal(${i.farmerId}, '${i.id}')" class="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition cursor-pointer" title="මුදල් ගෙවන්න">
                 ගෙවීම
               </button>
             ` : ''}
-            <button onclick="FarmerManager.printIntakeSlipById('${i.id}')" class="p-1.5 bg-slate-800 hover:bg-sky-600 text-slate-300 hover:text-white rounded-lg transition" title="රිසිට්පත මුද්‍රණය (Print Slip)">
+            <button type="button" onclick="FarmerManager.printIntakeSlipById('${i.id}')" class="p-1.5 bg-slate-800 hover:bg-sky-600 text-slate-300 hover:text-white rounded-lg transition cursor-pointer" title="රිසිට්පත මුද්‍රණය (Print Slip)">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
             </button>
           </td>
@@ -1434,7 +1434,7 @@ const FarmerManager = {
         <td class="p-3 text-slate-400 text-[11px]">${p.notes || (p.intakeSlipNo ? `Slip: ${p.intakeSlipNo}` : '-')}</td>
         <td class="p-3 text-right space-x-1 whitespace-nowrap">
           <span class="text-[10px] text-slate-500 font-mono mr-2">@${p.paidBy || 'staff'}</span>
-          <button onclick="FarmerManager.printPaymentVoucherById('${p.id}')" class="p-1.5 bg-slate-800 hover:bg-emerald-600 text-slate-300 hover:text-white rounded-lg transition" title="වවුචරය මුද්‍රණය (Print Voucher)">
+          <button type="button" onclick="FarmerManager.printPaymentVoucherById('${p.id}')" class="p-1.5 bg-slate-800 hover:bg-emerald-600 text-slate-300 hover:text-white rounded-lg transition cursor-pointer" title="වවුචරය මුද්‍රණය (Print Voucher)">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
           </button>
         </td>
@@ -1480,8 +1480,19 @@ const FarmerManager = {
     setTimeout(() => { if (amountInput) amountInput.focus(); }, 50);
   },
 
+  processPaymentSettlement(event) {
+    if (event) {
+      if (typeof event.preventDefault === 'function') event.preventDefault();
+      if (typeof event.stopPropagation === 'function') event.stopPropagation();
+    }
+    return this.processFarmerPayment(event);
+  },
+
   async processFarmerPayment(event) {
-    if (event) event.preventDefault();
+    if (event) {
+      if (typeof event.preventDefault === 'function') event.preventDefault();
+      if (typeof event.stopPropagation === 'function') event.stopPropagation();
+    }
 
     const farmerId = parseInt(document.getElementById('settleFarmerId')?.value);
     const specificIntakeId = document.getElementById('settleSpecificIntakeId')?.value;
@@ -1489,13 +1500,21 @@ const FarmerManager = {
     const paymentDate = document.getElementById('settlePaymentDate')?.value || new Date().toISOString().slice(0, 10);
     const notes = document.getElementById('settleNotesInput')?.value.trim() || '';
 
+    if (isNaN(farmerId)) {
+      alert('කරුණාකර වලංගු ගොවියෙකු තෝරන්න.');
+      return false;
+    }
+
     if (amount <= 0) {
       alert('කරුණාකර වලංගු මුදලක් ඇතුළත් කරන්න (Please enter valid payment amount).');
-      return;
+      return false;
     }
 
     const farmer = await db.farmers.get(farmerId);
-    if (!farmer) return;
+    if (!farmer) {
+      alert('ගොවි ගිණුම හමු නොවීය.');
+      return false;
+    }
 
     const currentUser = (window.AuthManager && AuthManager.currentUser) ? AuthManager.currentUser.username : 'cashier';
     const paymentNo = `FPAY-${Date.now().toString().slice(-6)}`;
@@ -1916,7 +1935,18 @@ if (typeof document !== 'undefined') {
 
 // ── Alias fixes: HTML calls these short names but functions have longer names ──
 FarmerManager.saveDailyIntake = function(event) {
+  if (event) {
+    if (typeof event.preventDefault === 'function') event.preventDefault();
+    if (typeof event.stopPropagation === 'function') event.stopPropagation();
+  }
   return FarmerManager.saveFarmerIntake(event);
+};
+FarmerManager.processPaymentSettlement = function(event) {
+  if (event) {
+    if (typeof event.preventDefault === 'function') event.preventDefault();
+    if (typeof event.stopPropagation === 'function') event.stopPropagation();
+  }
+  return FarmerManager.processFarmerPayment(event);
 };
 FarmerManager.onVegSearchInput = function(query) {
   return FarmerManager.onVegetableSearchInput(query);
