@@ -74,10 +74,18 @@ const OfflineQueueManager = (function () {
       const banner = document.getElementById('offlineStatusBanner');
       if (!banner) return;
       banner.className = 'offline-banner banner-' + type;
-      banner.textContent = message;
+      banner.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:center;gap:10px;width:100%;">
+          <span>${message}</span>
+          <button type="button" onclick="document.getElementById('offlineStatusBanner').style.display='none'" style="cursor:pointer;background:rgba(255,255,255,0.22);border:none;color:#fff;border-radius:4px;padding:2px 8px;font-size:11px;font-weight:bold;">✕</button>
+        </div>
+      `;
       banner.style.display = 'flex';
       if (type === 'online') {
-        setTimeout(() => { banner.style.display = 'none'; }, 3500);
+        setTimeout(() => { if (banner.className.includes('banner-online')) banner.style.display = 'none'; }, 3500);
+      } else if (type === 'offline') {
+        // Auto-hide offline banner after 5 seconds so it never permanently blocks user view
+        setTimeout(() => { if (banner.className.includes('banner-offline')) banner.style.display = 'none'; }, 5000);
       }
     } catch (e) {}
   }
@@ -85,7 +93,24 @@ const OfflineQueueManager = (function () {
   function _loadQueue() {
     try {
       const raw = localStorage.getItem(QUEUE_KEY);
-      return raw ? JSON.parse(raw) : [];
+      if (!raw) return [];
+      let queue = JSON.parse(raw);
+      if (!Array.isArray(queue)) return [];
+
+      // Auto-purge any corrupted, oversized, or permanently failing items (like raw image base64)
+      const valid = queue.filter(op => {
+        if (!op || !op.collection || !op.docId) return false;
+        // Large store_logo objects are stored locally and do not need to block sync
+        if (op.docId === 'store_logo') return false;
+        if (op.data && JSON.stringify(op.data).length > 400000) return false;
+        if (op._retries && op._retries >= 3) return false;
+        return true;
+      });
+
+      if (valid.length !== queue.length) {
+        _saveQueue(valid);
+      }
+      return valid;
     } catch (e) { return []; }
   }
 
@@ -96,6 +121,10 @@ const OfflineQueueManager = (function () {
   }
 
   function _addToQueue(op) {
+    if (!op || !op.collection || !op.docId) return;
+    if (op.docId === 'store_logo') return;
+    if (op.data && JSON.stringify(op.data).length > 400000) return;
+
     const queue = _loadQueue();
     if (queue.length >= MAX_QUEUE_SIZE) queue.shift();
     queue.push({ ...op, _queuedAt: Date.now() });
@@ -107,7 +136,14 @@ const OfflineQueueManager = (function () {
     if (_isSyncing) return;
     const queue = _loadQueue();
     if (queue.length === 0) {
-      _showBanner('online', '\u2705 Online | Firebase connected!');
+      if (dbInstance && dbInstance.firestoreDb) {
+        _showBanner('online', '\u2705 Online | Firebase connected!');
+      }
+      return;
+    }
+
+    if (!dbInstance || !dbInstance.sdk || !dbInstance.firestoreDb) {
+      // If Firebase is not ready or offline, do not report as failure
       return;
     }
 
@@ -118,9 +154,8 @@ const OfflineQueueManager = (function () {
     for (const op of queue) {
       try {
         const { collection: col, type, docId, data } = op;
-        if (!dbInstance || !dbInstance.sdk || !dbInstance.firestoreDb) {
-          failed.push(op); continue;
-        }
+        if (docId === 'store_logo') continue;
+
         const docRef = dbInstance.sdk.doc(dbInstance.firestoreDb, col, docId);
         if (type === 'delete') {
           await dbInstance.sdk.deleteDoc(docRef);
@@ -129,7 +164,12 @@ const OfflineQueueManager = (function () {
         }
       } catch (e) {
         console.warn('[OfflineQueue] Sync failed:', op, e);
-        failed.push(op);
+        op._retries = (op._retries || 0) + 1;
+        if (op._retries < 3) {
+          failed.push(op);
+        } else {
+          console.warn('[OfflineQueue] Max retries reached, discarding op:', op);
+        }
       }
     }
 
@@ -149,23 +189,36 @@ const OfflineQueueManager = (function () {
 
     enqueue(op) { _addToQueue(op); },
 
+    clearQueue() {
+      try {
+        localStorage.removeItem(QUEUE_KEY);
+      } catch (e) {}
+      _showBanner('online', '✅ Offline sync queue cleared.');
+    },
+
+    forceSync(dbInstance) {
+      if (!dbInstance) dbInstance = window.db;
+      _syncQueue(dbInstance);
+    },
+
     init(dbInstance) {
+      const pending = _loadQueue().length;
       if (!navigator.onLine) {
-        const pending = _loadQueue().length;
-        _showBanner('offline', pending > 0
-          ? '\uD83D\uDCF5 Offline Mode | ' + pending + ' pending sync(s)'
-          : '\uD83D\uDCF5 Offline Mode - App works normally. Data syncs when online.');
+        if (pending > 0) {
+          _showBanner('offline', '\uD83D\uDCF5 Offline Mode | ' + pending + ' pending sync(s)');
+        }
       } else {
-        _syncQueue(dbInstance);
+        setTimeout(() => _syncQueue(dbInstance), 1000);
       }
       window.addEventListener('online', () => {
         console.log('[OfflineQueue] Internet restored. Syncing...');
-        setTimeout(() => _syncQueue(dbInstance), 2000);
+        setTimeout(() => _syncQueue(dbInstance), 1500);
       });
       window.addEventListener('offline', () => {
-        const pending = _loadQueue().length;
-        _showBanner('offline', '\uD83D\uDCF5 Offline Mode - App works normally. Data syncs when online.');
-        console.warn('[OfflineQueue] Internet lost. Operations will be queued.');
+        const p = _loadQueue().length;
+        if (p > 0) {
+          _showBanner('offline', '\uD83D\uDCF5 Offline Mode | ' + p + ' pending sync(s)');
+        }
       });
     },
 
@@ -928,6 +981,17 @@ class FirestoreDB {
       let appModule = window.__FIREBASE_APP_MODULE__;
       let firestoreModule = window.__FIREBASE_FIRESTORE_MODULE__;
 
+      // Wait up to 3 seconds for window.__FIREBASE_APP_MODULE__ from CDN script if online
+      let waitCount = 0;
+      while ((!appModule || !firestoreModule) && waitCount < 15) {
+        appModule = window.__FIREBASE_APP_MODULE__;
+        firestoreModule = window.__FIREBASE_FIRESTORE_MODULE__;
+        if (appModule && firestoreModule) break;
+        if (!navigator.onLine) break; // Don't delay if completely offline
+        await new Promise(r => setTimeout(r, 200));
+        waitCount++;
+      }
+
       if (!appModule || !firestoreModule) {
         try {
           appModule = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js');
@@ -1627,6 +1691,7 @@ async function setSetting(key, value) {
 window.db = db;
 window.firestoreDb = db.firestoreDb;
 window.firebaseApp = db.app;
+window.OfflineQueueManager = OfflineQueueManager;
 window.getSetting = getSetting;
 window.setSetting = setSetting;
 window.formatLKR = formatLKR;

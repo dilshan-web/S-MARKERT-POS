@@ -2774,6 +2774,32 @@ input[type=number] {
             </div>
           </div>
 
+          <!-- Cloud Sync & Offline Queue Manager -->
+          <div class="p-5 bg-slate-900 border border-slate-800 rounded-2xl space-y-3">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
+              <div>
+                <h3 class="text-base font-bold text-slate-100 flex items-center gap-2">
+                  <span>🔄</span> <span>Firebase Cloud Sync & Offline Status</span>
+                </h3>
+                <p class="text-xs text-slate-400">Offline-first local storage with automatic multi-device cloud synchronization.</p>
+              </div>
+              <div class="flex items-center gap-2">
+                <button type="button" onclick="OfflineQueueManager.forceSync()" class="px-3.5 py-2 bg-sky-600 hover:bg-sky-500 text-white font-bold rounded-xl text-xs transition flex items-center gap-1.5 shadow-md shadow-sky-600/20">
+                  <span>🔄</span> <span>Sync Now</span>
+                </button>
+                <button type="button" onclick="if(confirm('Clear offline sync queue? Any unsynced operations will be safely dismissed.')){ OfflineQueueManager.clearQueue(); }" class="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl text-xs transition border border-slate-700">
+                  <span>🧹</span> <span>Clear Queue</span>
+                </button>
+              </div>
+            </div>
+            <div class="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-400 pt-1">
+              <div class="flex items-center gap-2">
+                <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span>System Status: 100% Offline Capable &bull; Works smoothly with or without internet</span>
+              </div>
+            </div>
+          </div>
+
           <!-- PWA Mobile / Desktop App Installation Card -->
           <div class="p-5 bg-gradient-to-r from-sky-950/40 via-slate-900 to-emerald-950/40 border border-sky-900/60 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4">
             <div class="flex items-center gap-3.5">
@@ -4723,10 +4749,18 @@ const OfflineQueueManager = (function () {
       const banner = document.getElementById('offlineStatusBanner');
       if (!banner) return;
       banner.className = 'offline-banner banner-' + type;
-      banner.textContent = message;
+      banner.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:center;gap:10px;width:100%;">
+          <span>${message}</span>
+          <button type="button" onclick="document.getElementById('offlineStatusBanner').style.display='none'" style="cursor:pointer;background:rgba(255,255,255,0.22);border:none;color:#fff;border-radius:4px;padding:2px 8px;font-size:11px;font-weight:bold;">✕</button>
+        </div>
+      `;
       banner.style.display = 'flex';
       if (type === 'online') {
-        setTimeout(() => { banner.style.display = 'none'; }, 3500);
+        setTimeout(() => { if (banner.className.includes('banner-online')) banner.style.display = 'none'; }, 3500);
+      } else if (type === 'offline') {
+        // Auto-hide offline banner after 5 seconds so it never permanently blocks user view
+        setTimeout(() => { if (banner.className.includes('banner-offline')) banner.style.display = 'none'; }, 5000);
       }
     } catch (e) {}
   }
@@ -4734,7 +4768,24 @@ const OfflineQueueManager = (function () {
   function _loadQueue() {
     try {
       const raw = localStorage.getItem(QUEUE_KEY);
-      return raw ? JSON.parse(raw) : [];
+      if (!raw) return [];
+      let queue = JSON.parse(raw);
+      if (!Array.isArray(queue)) return [];
+
+      // Auto-purge any corrupted, oversized, or permanently failing items (like raw image base64)
+      const valid = queue.filter(op => {
+        if (!op || !op.collection || !op.docId) return false;
+        // Large store_logo objects are stored locally and do not need to block sync
+        if (op.docId === 'store_logo') return false;
+        if (op.data && JSON.stringify(op.data).length > 400000) return false;
+        if (op._retries && op._retries >= 3) return false;
+        return true;
+      });
+
+      if (valid.length !== queue.length) {
+        _saveQueue(valid);
+      }
+      return valid;
     } catch (e) { return []; }
   }
 
@@ -4745,6 +4796,10 @@ const OfflineQueueManager = (function () {
   }
 
   function _addToQueue(op) {
+    if (!op || !op.collection || !op.docId) return;
+    if (op.docId === 'store_logo') return;
+    if (op.data && JSON.stringify(op.data).length > 400000) return;
+
     const queue = _loadQueue();
     if (queue.length >= MAX_QUEUE_SIZE) queue.shift();
     queue.push({ ...op, _queuedAt: Date.now() });
@@ -4756,7 +4811,14 @@ const OfflineQueueManager = (function () {
     if (_isSyncing) return;
     const queue = _loadQueue();
     if (queue.length === 0) {
-      _showBanner('online', '\u2705 Online | Firebase connected!');
+      if (dbInstance && dbInstance.firestoreDb) {
+        _showBanner('online', '\u2705 Online | Firebase connected!');
+      }
+      return;
+    }
+
+    if (!dbInstance || !dbInstance.sdk || !dbInstance.firestoreDb) {
+      // If Firebase is not ready or offline, do not report as failure
       return;
     }
 
@@ -4767,9 +4829,8 @@ const OfflineQueueManager = (function () {
     for (const op of queue) {
       try {
         const { collection: col, type, docId, data } = op;
-        if (!dbInstance || !dbInstance.sdk || !dbInstance.firestoreDb) {
-          failed.push(op); continue;
-        }
+        if (docId === 'store_logo') continue;
+
         const docRef = dbInstance.sdk.doc(dbInstance.firestoreDb, col, docId);
         if (type === 'delete') {
           await dbInstance.sdk.deleteDoc(docRef);
@@ -4778,7 +4839,12 @@ const OfflineQueueManager = (function () {
         }
       } catch (e) {
         console.warn('[OfflineQueue] Sync failed:', op, e);
-        failed.push(op);
+        op._retries = (op._retries || 0) + 1;
+        if (op._retries < 3) {
+          failed.push(op);
+        } else {
+          console.warn('[OfflineQueue] Max retries reached, discarding op:', op);
+        }
       }
     }
 
@@ -4798,23 +4864,36 @@ const OfflineQueueManager = (function () {
 
     enqueue(op) { _addToQueue(op); },
 
+    clearQueue() {
+      try {
+        localStorage.removeItem(QUEUE_KEY);
+      } catch (e) {}
+      _showBanner('online', '✅ Offline sync queue cleared.');
+    },
+
+    forceSync(dbInstance) {
+      if (!dbInstance) dbInstance = window.db;
+      _syncQueue(dbInstance);
+    },
+
     init(dbInstance) {
+      const pending = _loadQueue().length;
       if (!navigator.onLine) {
-        const pending = _loadQueue().length;
-        _showBanner('offline', pending > 0
-          ? '\uD83D\uDCF5 Offline Mode | ' + pending + ' pending sync(s)'
-          : '\uD83D\uDCF5 Offline Mode - App works normally. Data syncs when online.');
+        if (pending > 0) {
+          _showBanner('offline', '\uD83D\uDCF5 Offline Mode | ' + pending + ' pending sync(s)');
+        }
       } else {
-        _syncQueue(dbInstance);
+        setTimeout(() => _syncQueue(dbInstance), 1000);
       }
       window.addEventListener('online', () => {
         console.log('[OfflineQueue] Internet restored. Syncing...');
-        setTimeout(() => _syncQueue(dbInstance), 2000);
+        setTimeout(() => _syncQueue(dbInstance), 1500);
       });
       window.addEventListener('offline', () => {
-        const pending = _loadQueue().length;
-        _showBanner('offline', '\uD83D\uDCF5 Offline Mode - App works normally. Data syncs when online.');
-        console.warn('[OfflineQueue] Internet lost. Operations will be queued.');
+        const p = _loadQueue().length;
+        if (p > 0) {
+          _showBanner('offline', '\uD83D\uDCF5 Offline Mode | ' + p + ' pending sync(s)');
+        }
       });
     },
 
@@ -5576,6 +5655,17 @@ class FirestoreDB {
     try {
       let appModule = window.__FIREBASE_APP_MODULE__;
       let firestoreModule = window.__FIREBASE_FIRESTORE_MODULE__;
+
+      // Wait up to 3 seconds for window.__FIREBASE_APP_MODULE__ from CDN script if online
+      let waitCount = 0;
+      while ((!appModule || !firestoreModule) && waitCount < 15) {
+        appModule = window.__FIREBASE_APP_MODULE__;
+        firestoreModule = window.__FIREBASE_FIRESTORE_MODULE__;
+        if (appModule && firestoreModule) break;
+        if (!navigator.onLine) break; // Don't delay if completely offline
+        await new Promise(r => setTimeout(r, 200));
+        waitCount++;
+      }
 
       if (!appModule || !firestoreModule) {
         try {
@@ -15952,26 +16042,48 @@ const BackupManager = {
     });
   },
 
-  // Load and apply store logo from Dexie DB
+  // Load and apply store logo from Dexie DB / LocalStorage
   async loadStoreLogo() {
-    const logoData = await getSetting('store_logo', null);
+    let logoData = await getSetting('store_logo', null);
+    if (!logoData) {
+      try {
+        logoData = localStorage.getItem('pos_store_logo_backup');
+      } catch (e) {}
+    }
+
     const headerLogo = document.getElementById('headerLogoContainer');
     const loginLogo = document.getElementById('loginLogoContainer');
     const previewLogo = document.getElementById('settingsLogoPreview');
     const removeBtn = document.getElementById('removeLogoBtn');
 
-    if (logoData) {
+    if (logoData && typeof logoData === 'string' && logoData.startsWith('data:image')) {
       const imgHtml = `<img src="${logoData}" class="w-full h-full object-contain rounded-xl" alt="Store Logo" />`;
-      if (headerLogo) headerLogo.innerHTML = imgHtml;
-      if (loginLogo) loginLogo.innerHTML = `<img src="${logoData}" class="w-full h-full object-contain rounded-2xl" alt="Store Logo" />`;
+      if (headerLogo) {
+        headerLogo.innerHTML = imgHtml;
+        headerLogo.classList.remove('bg-gradient-to-tr', 'from-sky-600', 'to-emerald-500');
+        headerLogo.classList.add('bg-slate-800');
+      }
+      if (loginLogo) {
+        loginLogo.innerHTML = `<img src="${logoData}" class="w-full h-full object-contain rounded-2xl" alt="Store Logo" />`;
+        loginLogo.classList.remove('bg-gradient-to-tr', 'from-sky-600', 'to-emerald-500');
+        loginLogo.classList.add('bg-slate-800');
+      }
       if (previewLogo) {
         previewLogo.innerHTML = `<img src="${logoData}" class="max-h-24 max-w-full object-contain mx-auto rounded-lg shadow" />`;
       }
       if (removeBtn) removeBtn.classList.remove('hidden');
     } else {
       const defaultIcon = `<svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"/></svg>`;
-      if (headerLogo) headerLogo.innerHTML = defaultIcon;
-      if (loginLogo) loginLogo.innerHTML = `<svg class="w-9 h-9 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"/></svg>`;
+      if (headerLogo) {
+        headerLogo.innerHTML = defaultIcon;
+        headerLogo.classList.remove('bg-slate-800');
+        headerLogo.classList.add('bg-gradient-to-tr', 'from-sky-600', 'to-emerald-500');
+      }
+      if (loginLogo) {
+        loginLogo.innerHTML = `<svg class="w-9 h-9 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"/></svg>`;
+        loginLogo.classList.remove('bg-slate-800');
+        loginLogo.classList.add('bg-gradient-to-tr', 'from-sky-600', 'to-emerald-500');
+      }
       if (previewLogo) {
         previewLogo.innerHTML = `<div class="text-xs text-slate-500 py-3">No custom logo uploaded yet.</div>`;
       }
@@ -15979,34 +16091,84 @@ const BackupManager = {
     }
   },
 
+  // Helper to downscale and compress any chosen logo image to optimal POS dimensions & low KB
+  compressLogoImage(file, maxDimension = 280, quality = 0.85) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('Failed to read image file'));
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onerror = () => reject(new Error('Selected file is not a valid image'));
+        img.onload = () => {
+          let w = img.naturalWidth || img.width;
+          let h = img.naturalHeight || img.height;
+          if (w > maxDimension || h > maxDimension) {
+            if (w >= h) {
+              h = Math.round((h * maxDimension) / w);
+              w = maxDimension;
+            } else {
+              w = Math.round((w * maxDimension) / h);
+              h = maxDimension;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, w);
+          canvas.height = Math.max(1, h);
+          const ctx = canvas.getContext('2d');
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+          ctx.drawImage(img, 0, 0, w, h);
+          const mimeType = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+          const dataUrl = canvas.toDataURL(mimeType, quality);
+          resolve(dataUrl);
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  },
+
   // Upload Logo from Gallery / File System
   async handleLogoUpload(fileInput) {
-    const file = fileInput.files[0];
-    if (!file) return;
+    try {
+      const file = fileInput.files && fileInput.files[0];
+      if (!file) return;
 
-    if (file.size > 2 * 1024 * 1024) {
-      alert('Logo file size is too large. Please select an image under 2MB.');
-      fileInput.value = '';
-      return;
-    }
+      if (file.size > 10 * 1024 * 1024) {
+        alert('කරුණාකර 10MB ට අඩු ඡායාරූපයක් තෝරන්න (Image is too large, max 10MB).');
+        fileInput.value = '';
+        return;
+      }
 
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      const base64 = e.target.result;
-      await setSetting('store_logo', base64);
+      // Automatically compress and resize to optimal logo size (approx 15KB - 40KB)
+      const compressedDataUrl = await this.compressLogoImage(file, 280, 0.85);
+
+      // Save to settings
+      await setSetting('store_logo', compressedDataUrl);
+      // Also save to dedicated localStorage key as instant fallback
+      try {
+        localStorage.setItem('pos_store_logo_backup', compressedDataUrl);
+      } catch (e) {}
+
       await this.loadStoreLogo();
-      SoundManager.playSuccessChime();
-      alert('Store Logo uploaded and saved successfully!');
-    };
-    reader.readAsDataURL(file);
+      if (window.SoundManager) SoundManager.playSuccessChime();
+      alert('වෙළඳසැල් ලාංඡනය (Store Logo) සාර්ථකව ඇතුළත් විය! (Logo saved successfully)');
+      fileInput.value = '';
+    } catch (err) {
+      console.error('[BackupManager] Logo upload error:', err);
+      alert('ලාංඡනය ඇතුළත් කිරීමට නොහැකි විය: ' + (err.message || 'Error uploading logo'));
+    }
   },
 
   // Remove Logo
   async removeStoreLogo() {
     if (confirm('Remove custom store logo and revert to default icon?')) {
       await setSetting('store_logo', null);
+      try {
+        localStorage.removeItem('pos_store_logo_backup');
+      } catch (e) {}
       await this.loadStoreLogo();
-      SoundManager.playSuccessChime();
+      if (window.SoundManager) SoundManager.playSuccessChime();
     }
   },
 

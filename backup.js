@@ -23,26 +23,48 @@ const BackupManager = {
     });
   },
 
-  // Load and apply store logo from Dexie DB
+  // Load and apply store logo from Dexie DB / LocalStorage
   async loadStoreLogo() {
-    const logoData = await getSetting('store_logo', null);
+    let logoData = await getSetting('store_logo', null);
+    if (!logoData) {
+      try {
+        logoData = localStorage.getItem('pos_store_logo_backup');
+      } catch (e) {}
+    }
+
     const headerLogo = document.getElementById('headerLogoContainer');
     const loginLogo = document.getElementById('loginLogoContainer');
     const previewLogo = document.getElementById('settingsLogoPreview');
     const removeBtn = document.getElementById('removeLogoBtn');
 
-    if (logoData) {
+    if (logoData && typeof logoData === 'string' && logoData.startsWith('data:image')) {
       const imgHtml = `<img src="${logoData}" class="w-full h-full object-contain rounded-xl" alt="Store Logo" />`;
-      if (headerLogo) headerLogo.innerHTML = imgHtml;
-      if (loginLogo) loginLogo.innerHTML = `<img src="${logoData}" class="w-full h-full object-contain rounded-2xl" alt="Store Logo" />`;
+      if (headerLogo) {
+        headerLogo.innerHTML = imgHtml;
+        headerLogo.classList.remove('bg-gradient-to-tr', 'from-sky-600', 'to-emerald-500');
+        headerLogo.classList.add('bg-slate-800');
+      }
+      if (loginLogo) {
+        loginLogo.innerHTML = `<img src="${logoData}" class="w-full h-full object-contain rounded-2xl" alt="Store Logo" />`;
+        loginLogo.classList.remove('bg-gradient-to-tr', 'from-sky-600', 'to-emerald-500');
+        loginLogo.classList.add('bg-slate-800');
+      }
       if (previewLogo) {
         previewLogo.innerHTML = `<img src="${logoData}" class="max-h-24 max-w-full object-contain mx-auto rounded-lg shadow" />`;
       }
       if (removeBtn) removeBtn.classList.remove('hidden');
     } else {
       const defaultIcon = `<svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"/></svg>`;
-      if (headerLogo) headerLogo.innerHTML = defaultIcon;
-      if (loginLogo) loginLogo.innerHTML = `<svg class="w-9 h-9 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"/></svg>`;
+      if (headerLogo) {
+        headerLogo.innerHTML = defaultIcon;
+        headerLogo.classList.remove('bg-slate-800');
+        headerLogo.classList.add('bg-gradient-to-tr', 'from-sky-600', 'to-emerald-500');
+      }
+      if (loginLogo) {
+        loginLogo.innerHTML = `<svg class="w-9 h-9 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"/></svg>`;
+        loginLogo.classList.remove('bg-slate-800');
+        loginLogo.classList.add('bg-gradient-to-tr', 'from-sky-600', 'to-emerald-500');
+      }
       if (previewLogo) {
         previewLogo.innerHTML = `<div class="text-xs text-slate-500 py-3">No custom logo uploaded yet.</div>`;
       }
@@ -50,34 +72,84 @@ const BackupManager = {
     }
   },
 
+  // Helper to downscale and compress any chosen logo image to optimal POS dimensions & low KB
+  compressLogoImage(file, maxDimension = 280, quality = 0.85) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('Failed to read image file'));
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onerror = () => reject(new Error('Selected file is not a valid image'));
+        img.onload = () => {
+          let w = img.naturalWidth || img.width;
+          let h = img.naturalHeight || img.height;
+          if (w > maxDimension || h > maxDimension) {
+            if (w >= h) {
+              h = Math.round((h * maxDimension) / w);
+              w = maxDimension;
+            } else {
+              w = Math.round((w * maxDimension) / h);
+              h = maxDimension;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, w);
+          canvas.height = Math.max(1, h);
+          const ctx = canvas.getContext('2d');
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+          ctx.drawImage(img, 0, 0, w, h);
+          const mimeType = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+          const dataUrl = canvas.toDataURL(mimeType, quality);
+          resolve(dataUrl);
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  },
+
   // Upload Logo from Gallery / File System
   async handleLogoUpload(fileInput) {
-    const file = fileInput.files[0];
-    if (!file) return;
+    try {
+      const file = fileInput.files && fileInput.files[0];
+      if (!file) return;
 
-    if (file.size > 2 * 1024 * 1024) {
-      alert('Logo file size is too large. Please select an image under 2MB.');
-      fileInput.value = '';
-      return;
-    }
+      if (file.size > 10 * 1024 * 1024) {
+        alert('කරුණාකර 10MB ට අඩු ඡායාරූපයක් තෝරන්න (Image is too large, max 10MB).');
+        fileInput.value = '';
+        return;
+      }
 
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      const base64 = e.target.result;
-      await setSetting('store_logo', base64);
+      // Automatically compress and resize to optimal logo size (approx 15KB - 40KB)
+      const compressedDataUrl = await this.compressLogoImage(file, 280, 0.85);
+
+      // Save to settings
+      await setSetting('store_logo', compressedDataUrl);
+      // Also save to dedicated localStorage key as instant fallback
+      try {
+        localStorage.setItem('pos_store_logo_backup', compressedDataUrl);
+      } catch (e) {}
+
       await this.loadStoreLogo();
-      SoundManager.playSuccessChime();
-      alert('Store Logo uploaded and saved successfully!');
-    };
-    reader.readAsDataURL(file);
+      if (window.SoundManager) SoundManager.playSuccessChime();
+      alert('වෙළඳසැල් ලාංඡනය (Store Logo) සාර්ථකව ඇතුළත් විය! (Logo saved successfully)');
+      fileInput.value = '';
+    } catch (err) {
+      console.error('[BackupManager] Logo upload error:', err);
+      alert('ලාංඡනය ඇතුළත් කිරීමට නොහැකි විය: ' + (err.message || 'Error uploading logo'));
+    }
   },
 
   // Remove Logo
   async removeStoreLogo() {
     if (confirm('Remove custom store logo and revert to default icon?')) {
       await setSetting('store_logo', null);
+      try {
+        localStorage.removeItem('pos_store_logo_backup');
+      } catch (e) {}
       await this.loadStoreLogo();
-      SoundManager.playSuccessChime();
+      if (window.SoundManager) SoundManager.playSuccessChime();
     }
   },
 
