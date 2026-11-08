@@ -863,11 +863,7 @@ const FarmerManager = {
           <td class="p-3 font-semibold text-slate-100 flex items-center gap-2">
             <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
             <div>
-              <div>${item.name}</div>
-              <div class="flex gap-2 mt-0.5">
-                ${item.retailPrice ? `<span class="text-sky-400 font-mono text-[10px]">🏷️ Rs.${item.retailPrice.toFixed(2)}</span>` : ''}
-                ${item.wholesalePrice ? `<span class="text-violet-400 font-mono text-[10px]">🏪 Rs.${item.wholesalePrice.toFixed(2)}</span>` : ''}
-              </div>
+              <div class="font-bold text-slate-100">${item.name}</div>
             </div>
           </td>
           <td class="p-3 font-mono font-bold text-sky-400 text-center">${item.weightKg.toFixed(2)} kg</td>
@@ -1073,12 +1069,12 @@ const FarmerManager = {
               nameSi: item.name,
               category: 'Fresh Produce (එළවළු සහ පලතුරු)',
               costPrice: item.unitPrice,
-              markedPrice: item.retailPrice || Math.round(item.unitPrice * 1.3),
+              markedPrice: 0,
               sellingPrice: autoRetail,
               wholesalePrice: autoWholesale,
               unit: 'kg',
               currentStock: item.weightKg,
-              minStock: 5,
+              minStock: 0,
               barcodes: []
             });
           }
@@ -1655,12 +1651,18 @@ const FarmerManager = {
   // PRINTING: THERMAL SLIPS & PAYMENT VOUCHERS
   // =========================================================
   async printIntakeSlipById(id) {
-    const intake = await db.farmerIntakes.get(id);
+    let intake = await db.farmerIntakes.get(id);
+    if (!intake && !isNaN(Number(id))) {
+      intake = await db.farmerIntakes.get(Number(id));
+    }
     if (intake) this.printIntakeSlip(intake);
   },
 
   async printPaymentVoucherById(id) {
-    const payment = await db.farmerPayments.get(id);
+    let payment = await db.farmerPayments.get(id);
+    if (!payment && !isNaN(Number(id))) {
+      payment = await db.farmerPayments.get(Number(id));
+    }
     if (!payment) return;
     const farmer = await db.farmers.get(payment.farmerId);
     payment.remainingBalance = farmer ? farmer.outstandingBalance : 0;
@@ -1668,49 +1670,48 @@ const FarmerManager = {
   },
 
   async printIntakeSlip(intake) {
-    const settings = {
-      storeName: (await getSetting('store_name', 'SUPERMARKET')).value || 'SUPERMARKET',
-      storeNameSi: (await getSetting('store_name_si', '')).value || '',
-      phone: (await getSetting('store_phone', '')).value || '',
-      address: (await getSetting('store_address', '')).value || '',
-      thermalWidth: (await getSetting('thermal_width', '80mm')).value || '80mm'
-    };
+    if (!intake) return;
+    const storeName = await getSetting('store_name', 'SUPERMARKET');
+    const storeNameSi = await getSetting('store_name_si', '');
+    const phone = await getSetting('store_phone', '');
+    const address = await getSetting('store_address', '');
+    const thermalWidth = await getSetting('thermal_width', '80mm');
 
     const itemsHtml = (intake.items || []).map(i => `
-      <tr>
-        <td style="padding: 2px 0; text-align: left;">${i.name}</td>
-        <td style="padding: 2px 0; text-align: center;">${i.weightKg.toFixed(2)}kg</td>
-        <td style="padding: 2px 0; text-align: right;">${formatLKR(i.unitPrice)}</td>
-        <td style="padding: 2px 0; text-align: right; font-weight: bold;">${formatLKR(i.lineTotal)}</td>
+      <tr style="border-bottom: 1px dashed #ccc;">
+        <td style="padding: 3px 0; text-align: left; font-weight: 600;">${i.name}</td>
+        <td style="padding: 3px 0; text-align: center; font-weight: 700;">${Number(i.weightKg || 0).toFixed(2)}kg</td>
+        <td style="padding: 3px 0; text-align: right;">${formatLKR(i.unitPrice)}</td>
+        <td style="padding: 3px 0; text-align: right; font-weight: bold;">${formatLKR(i.lineTotal)}</td>
       </tr>
     `).join('');
 
     const html = `
-      <div style="text-align: center; font-family: monospace; font-size: 11px; line-height: 1.35; color: #000; padding: 4px;">
-        <h2 style="font-size: 14px; margin: 0; font-weight: 900;">${settings.storeName}</h2>
-        ${settings.storeNameSi ? `<div style="font-size: 11px;">${settings.storeNameSi}</div>` : ''}
-        ${settings.address ? `<div style="font-size: 10px;">${settings.address}</div>` : ''}
-        ${settings.phone ? `<div style="font-size: 10px;">Tel: ${settings.phone}</div>` : ''}
+      <div style="text-align: center; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans Sinhala', 'Iskoola Pota', Arial, sans-serif; font-size: 11px; line-height: 1.35; color: #000; padding: 4px;">
+        <h2 style="font-size: 15px; margin: 0; font-weight: 900; text-transform: uppercase;">${storeName}</h2>
+        ${storeNameSi ? `<div style="font-size: 11px; font-weight: 700;">${storeNameSi}</div>` : ''}
+        ${address ? `<div style="font-size: 10px;">${address}</div>` : ''}
+        ${phone ? `<div style="font-size: 10px; font-weight: bold;">Tel: ${phone}</div>` : ''}
         
-        <div style="border-top: 1px dashed #000; border-bottom: 1px dashed #000; margin: 6px 0; padding: 4px 0; font-weight: bold;">
+        <div style="border-top: 1.5px dashed #000; border-bottom: 1.5px dashed #000; margin: 6px 0; padding: 4px 0; font-weight: 900; font-size: 12px;">
           FARMER PRODUCE INTAKE SLIP<br>
-          <span style="font-size: 9.5px;">(එළවළු බාරගැනීමේ රිසිට්පත)</span>
+          <span style="font-size: 10px; font-weight: bold;">(එළවළු බාරගැනීමේ රිසිට්පත)</span>
         </div>
 
-        <div style="text-align: left; font-size: 10px; margin-bottom: 6px;">
-          <div>Slip No: <strong>${intake.slipNo}</strong></div>
-          <div>Date/Time: ${intake.date} ${intake.time || ''}</div>
-          <div>Farmer: <strong>${intake.farmerName}</strong> (${intake.farmerPhone || '-'})</div>
+        <div style="text-align: left; font-size: 10.5px; margin-bottom: 6px; line-height: 1.4;">
+          <div>Slip No: <strong style="font-size: 11px;">${intake.slipNo}</strong></div>
+          <div>Date/Time: <strong>${intake.date} ${intake.time || ''}</strong></div>
+          <div>Farmer: <strong>${intake.farmerName}</strong> ${intake.farmerPhone ? `(${intake.farmerPhone})` : ''}</div>
           <div>Received By: @${intake.receivedBy || 'staff'}</div>
         </div>
 
-        <table style="width: 100%; border-collapse: collapse; font-size: 10px; margin-bottom: 6px;">
+        <table style="width: 100%; border-collapse: collapse; font-size: 10.5px; margin-bottom: 6px;">
           <thead>
-            <tr style="border-bottom: 1px solid #000;">
-              <th style="text-align: left;">Item</th>
-              <th style="text-align: center;">KG</th>
-              <th style="text-align: right;">Rate</th>
-              <th style="text-align: right;">Total</th>
+            <tr style="border-bottom: 1.5px solid #000;">
+              <th style="text-align: left; padding: 2px 0;">Item</th>
+              <th style="text-align: center; padding: 2px 0;">KG</th>
+              <th style="text-align: right; padding: 2px 0;">Rate</th>
+              <th style="text-align: right; padding: 2px 0;">Total</th>
             </tr>
           </thead>
           <tbody>
@@ -1718,18 +1719,18 @@ const FarmerManager = {
           </tbody>
         </table>
 
-        <div style="border-top: 1px solid #000; padding-top: 4px; font-size: 11px;">
-          <div style="display: flex; justify-content: space-between;">
+        <div style="border-top: 1.5px solid #000; padding-top: 4px; font-size: 11px;">
+          <div style="display: flex; justify-content: space-between; padding: 1px 0;">
             <span>Total Weight:</span>
-            <strong>${intake.totalWeight ? intake.totalWeight.toFixed(2) : '-'} kg</strong>
+            <strong>${intake.totalWeight ? Number(intake.totalWeight).toFixed(2) : '-'} kg</strong>
           </div>
-          <div style="display: flex; justify-content: space-between; font-size: 12px; font-weight: 900; margin: 2px 0;">
-            <span>Grand Total:</span>
+          <div style="display: flex; justify-content: space-between; font-size: 13px; font-weight: 900; margin: 3px 0; border-top: 1.5px solid #000; border-bottom: 1.5px solid #000; padding: 3px 0;">
+            <span>GRAND TOTAL:</span>
             <span>${formatLKR(intake.grandTotal)}</span>
           </div>
-          <div style="display: flex; justify-content: space-between;">
+          <div style="display: flex; justify-content: space-between; padding: 1px 0;">
             <span>Paid Cash Now:</span>
-            <span>${formatLKR(intake.paidAmount || 0)}</span>
+            <strong style="color: #000;">${formatLKR(intake.paidAmount || 0)}</strong>
           </div>
           <div style="display: flex; justify-content: space-between; font-size: 12px; font-weight: 900; border-top: 1px dashed #000; margin-top: 3px; padding-top: 3px;">
             <span>Balance Due (ණය):</span>
@@ -1737,47 +1738,47 @@ const FarmerManager = {
           </div>
         </div>
 
-        <div style="margin-top: 15px; border-top: 1px dashed #000; padding-top: 6px; font-size: 9.5px;">
+        <div style="margin-top: 14px; border-top: 1px dashed #000; padding-top: 6px; font-size: 9.5px; text-align: center;">
           <div>Please present this slip when collecting cash payout.</div>
-          <div style="margin-top: 2px;">මුදල් ලබාගැනීමට පැමිණෙන විට කරුණාකර මෙම රිසිට්පත රැගෙන එන්න.</div>
+          <div style="margin-top: 2px; font-weight: bold;">මුදල් ලබාගැනීමට පැමිණෙන විට කරුණාකර මෙම රිසිට්පත රැගෙන එන්න.</div>
+          <div style="margin-top: 6px; font-size: 8.5px; color: #333;">DSK Supermarket POS</div>
         </div>
       </div>
     `;
 
-    this._printContent(html, settings.thermalWidth);
+    this._printContent(html, thermalWidth, `Intake Slip - ${intake.slipNo}`);
   },
 
   async printPaymentVoucher(payment) {
-    const settings = {
-      storeName: (await getSetting('store_name', 'SUPERMARKET')).value || 'SUPERMARKET',
-      phone: (await getSetting('store_phone', '')).value || '',
-      thermalWidth: (await getSetting('thermal_width', '80mm')).value || '80mm'
-    };
+    if (!payment) return;
+    const storeName = await getSetting('store_name', 'SUPERMARKET');
+    const phone = await getSetting('store_phone', '');
+    const thermalWidth = await getSetting('thermal_width', '80mm');
 
     const html = `
-      <div style="text-align: center; font-family: monospace; font-size: 11px; line-height: 1.35; color: #000; padding: 4px;">
-        <h2 style="font-size: 14px; margin: 0; font-weight: 900;">${settings.storeName}</h2>
-        ${settings.phone ? `<div style="font-size: 10px;">Tel: ${settings.phone}</div>` : ''}
+      <div style="text-align: center; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans Sinhala', 'Iskoola Pota', Arial, sans-serif; font-size: 11px; line-height: 1.35; color: #000; padding: 4px;">
+        <h2 style="font-size: 15px; margin: 0; font-weight: 900; text-transform: uppercase;">${storeName}</h2>
+        ${phone ? `<div style="font-size: 10px; font-weight: bold;">Tel: ${phone}</div>` : ''}
 
-        <div style="border-top: 1px dashed #000; border-bottom: 1px dashed #000; margin: 6px 0; padding: 4px 0; font-weight: bold;">
+        <div style="border-top: 1.5px dashed #000; border-bottom: 1.5px dashed #000; margin: 6px 0; padding: 4px 0; font-weight: 900; font-size: 12px;">
           FARMER CASH PAYMENT VOUCHER<br>
-          <span style="font-size: 9.5px;">(ගොවි මුදල් ගෙවීමේ වවුචරය)</span>
+          <span style="font-size: 10px; font-weight: bold;">(ගොවි මුදල් ගෙවීමේ වවුචරය)</span>
         </div>
 
-        <div style="text-align: left; font-size: 10px; margin-bottom: 8px;">
-          <div>Voucher No: <strong>${payment.paymentNo}</strong></div>
-          <div>Date: ${payment.paymentDate}</div>
+        <div style="text-align: left; font-size: 10.5px; margin-bottom: 8px; line-height: 1.4;">
+          <div>Voucher No: <strong style="font-size: 11px;">${payment.paymentNo}</strong></div>
+          <div>Date: <strong>${payment.paymentDate}</strong></div>
           <div>Paid To: <strong>${payment.farmerName}</strong></div>
-          <div>Method: ${(payment.paymentMethod || 'CASH').toUpperCase()}</div>
+          <div>Method: <strong>${(payment.paymentMethod || 'CASH').toUpperCase()}</strong></div>
           <div>Paid By: @${payment.paidBy || 'staff'}</div>
         </div>
 
-        <div style="border: 1px solid #000; padding: 8px; margin-bottom: 8px; font-size: 13px; font-weight: 900;">
+        <div style="border: 2px solid #000; padding: 8px; margin-bottom: 8px; font-size: 14px; font-weight: 900;">
           AMOUNT PAID: ${formatLKR(payment.amount)}
         </div>
 
         ${payment.remainingBalance !== undefined ? `
-          <div style="text-align: right; font-size: 10px; margin-bottom: 10px;">
+          <div style="text-align: right; font-size: 11px; margin-bottom: 10px;">
             Remaining Farmer Balance Due: <strong>${formatLKR(payment.remainingBalance)}</strong>
           </div>
         ` : ''}
@@ -1790,28 +1791,103 @@ const FarmerManager = {
             Farmer Signature
           </div>
         </div>
+
+        <div style="margin-top: 12px; font-size: 8.5px; color: #333; text-align: center;">
+          DSK Supermarket POS
+        </div>
       </div>
     `;
 
-    this._printContent(html, settings.thermalWidth);
+    this._printContent(html, thermalWidth, `Payment Voucher - ${payment.paymentNo}`);
   },
 
-  _printContent(html, thermalWidth = '80mm') {
+  _printContent(html, thermalWidth = '80mm', title = 'Farmer Slip') {
     const printArea = document.getElementById('thermalReceiptPrintArea');
-    if (!printArea) return;
-
-    printArea.innerHTML = html;
-    if (thermalWidth === '58mm') {
-      document.body.classList.add('printer-58mm');
-    } else {
-      document.body.classList.remove('printer-58mm');
+    if (printArea) {
+      printArea.innerHTML = html;
+      if (thermalWidth === '58mm') {
+        document.body.classList.add('printer-58mm');
+      } else {
+        document.body.classList.remove('printer-58mm');
+      }
     }
 
-    document.body.classList.add('printing-receipt');
-    window.print();
-    setTimeout(() => {
-      document.body.classList.remove('printing-receipt');
-    }, 1000);
+    const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || window.innerWidth < 768;
+
+    if (isMobile) {
+      let overlay = document.getElementById('mobilePrintOverlay');
+      if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'mobilePrintOverlay';
+        overlay.style.cssText = 'position:fixed;inset:0;background:#fff;z-index:99999;overflow:auto;padding:8mm;display:flex;flex-direction:column;align-items:center;';
+        document.body.appendChild(overlay);
+      }
+      overlay.innerHTML = html;
+      overlay.style.display = 'flex';
+      document.body.classList.add('printing-receipt');
+      setTimeout(() => {
+        window.print();
+        setTimeout(() => {
+          document.body.classList.remove('printing-receipt');
+          overlay.innerHTML = '';
+          overlay.style.display = 'none';
+        }, 1200);
+      }, 150);
+      return;
+    }
+
+    // Dedicated high-resolution desktop thermal print window
+    const printWin = window.open('', '_blank', 'width=380,height=600,top=100,left=100');
+    if (!printWin) {
+      // Fallback if popup blocked
+      document.body.classList.add('printing-receipt');
+      window.print();
+      setTimeout(() => document.body.classList.remove('printing-receipt'), 1000);
+      return;
+    }
+
+    const is58mm = (thermalWidth === '58mm');
+    const receiptWidth = is58mm ? '48mm' : '70mm';
+    const baseFontSize = is58mm ? '10px' : '11px';
+
+    printWin.document.open();
+    printWin.document.write(`<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>${title}</title>
+<style>
+  @page { margin: 0; size: auto; }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color: #000000 !important; }
+  body {
+    background: #ffffff;
+    color: #000000 !important;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans Sinhala", "Iskoola Pota", Arial, sans-serif;
+    font-size: ${baseFontSize};
+    font-weight: 600;
+    line-height: 1.35;
+    padding: 3mm 4mm 6mm 4mm;
+    width: ${receiptWidth};
+    margin: 0 auto;
+  }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { color: #000000 !important; }
+</style>
+</head>
+<body>
+  ${html}
+  <script>
+    window.onload = function() {
+      setTimeout(function() {
+        window.focus();
+        window.print();
+        setTimeout(function() { window.close(); }, 600);
+      }, 100);
+    };
+  <\/script>
+</body>
+</html>`);
+    printWin.document.close();
   }
 };
 

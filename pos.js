@@ -291,7 +291,7 @@ const POSManager = {
 
     const isWholesaleMode = this.pricingMode === 'wholesale';
     const unitPrice = isWholesaleMode ? (product.wholesalePrice || product.sellingPrice) : product.sellingPrice;
-    const markedPriceVal = Number(product.markedPrice) || Number(product.sellingPrice) || unitPrice;
+    const markedPriceVal = (product.markedPrice !== undefined && product.markedPrice !== null && !isNaN(Number(product.markedPrice))) ? Number(product.markedPrice) : 0;
 
     const existingIndex = this.cart.findIndex(item => item.productId === product.id);
 
@@ -484,7 +484,7 @@ const POSManager = {
     let totalItemDiscounts = 0;
 
     this.cart.forEach(item => {
-      const mrp = Number(item.markedPrice) || Number(item.retailPrice) || Number(item.price);
+      const mrp = (item.markedPrice !== undefined && item.markedPrice !== null && Number(item.markedPrice) > 0) ? Number(item.markedPrice) : Number(item.price);
       subtotalMRP += (mrp * item.qty);
       subtotal += (item.price * item.qty);
       totalItemDiscounts += (item.itemDiscountAmount || 0);
@@ -1104,7 +1104,8 @@ const POSManager = {
     this.lastFilteredProducts = items;
 
     grid.innerHTML = items.map(p => {
-      const isLow = p.currentStock <= p.minStock && p.currentStock > 0;
+      const minThreshold = Number(p.minStock) || 0;
+      const isLow = minThreshold > 0 && p.currentStock <= minThreshold && p.currentStock > 0;
       const isOut = p.currentStock <= 0;
       const wsPrice = p.wholesalePrice || p.sellingPrice;
 
@@ -1501,8 +1502,8 @@ const POSManager = {
     const cleanCustomer = this.cleanReceiptText(sale.customerName) || 'Walk-in Customer';
 
     const itemsRows = (sale.items || []).map((item, idx) => {
-      const mrp = Number(item.markedPrice) || Number(item.retailPrice) || Number(item.price);
-      const isDiscounted = mrp > item.price;
+      const mrp = (item.markedPrice !== undefined && item.markedPrice !== null && Number(item.markedPrice) > 0) ? Number(item.markedPrice) : 0;
+      const isDiscounted = mrp > 0 && mrp > item.price;
       const cleanItemName = this.cleanReceiptText(item.name || item.productName) || 'Item';
       const cleanUnit = this.cleanReceiptText(item.unit) || 'pcs';
       const itemDisc = Number(item.itemDiscountAmount || 0);

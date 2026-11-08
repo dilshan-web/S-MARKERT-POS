@@ -258,7 +258,8 @@ const DashboardManager = {
     allProducts.forEach(p => {
       const stock = Number(p.currentStock) || 0;
       totalStockValuation += (Number(p.costPrice) || 0) * stock;
-      if (stock <= (p.minStock || 0)) lowStockCount++;
+      const minThreshold = Number(p.minStock) || 0;
+      if (minThreshold > 0 && stock <= minThreshold && stock > 0) lowStockCount++;
       if (p.expiryDate) {
         const exp = new Date(p.expiryDate);
         if (exp <= now) expiredCount++;
@@ -425,7 +426,11 @@ const DashboardManager = {
     const container = document.getElementById('dashAlertsContainer');
     if (!container) return;
 
-    const lowStockItems = allProducts.filter(p => (Number(p.currentStock) || 0) <= (p.minStock || 0));
+    const lowStockItems = allProducts.filter(p => {
+      const min = Number(p.minStock) || 0;
+      const stock = Number(p.currentStock) || 0;
+      return min > 0 && stock <= min && stock > 0;
+    });
     const expiredItems = allProducts.filter(p => p.expiryDate && new Date(p.expiryDate) <= now);
     const nearExpiryItems = allProducts.filter(p => p.expiryDate && new Date(p.expiryDate) > now && new Date(p.expiryDate) <= in30Days);
 

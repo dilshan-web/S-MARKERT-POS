@@ -50,7 +50,8 @@ const InventoryManager = {
       totalCostVal += (Number(p.costPrice) || 0) * stock;
       totalRetailVal += (Number(p.sellingPrice) || 0) * stock;
 
-      if (stock <= (p.minStock || 0)) {
+      const minThreshold = Number(p.minStock) || 0;
+      if (minThreshold > 0 && stock <= minThreshold && stock > 0) {
         lowStockCount++;
       }
 
@@ -89,7 +90,10 @@ const InventoryManager = {
 
     // Apply Filter
     if (this.currentFilter === 'low') {
-      products = products.filter(p => p.currentStock <= p.minStock && p.currentStock > 0);
+      products = products.filter(p => {
+        const min = Number(p.minStock) || 0;
+        return min > 0 && p.currentStock <= min && p.currentStock > 0;
+      });
     } else if (this.currentFilter === 'out') {
       products = products.filter(p => p.currentStock <= 0);
     } else if (this.currentFilter === 'nearExpiry') {
@@ -118,7 +122,8 @@ const InventoryManager = {
 
     tableBody.innerHTML = products.map(p => {
       const isOut = p.currentStock <= 0;
-      const isLow = p.currentStock <= p.minStock && !isOut;
+      const minThreshold = Number(p.minStock) || 0;
+      const isLow = minThreshold > 0 && p.currentStock <= minThreshold && !isOut;
       const expDate = p.expiryDate ? new Date(p.expiryDate) : null;
       const isExpired = expDate && expDate < today;
       const isNearExpiry = expDate && expDate <= thirtyDaysAhead && !isExpired;
@@ -137,7 +142,7 @@ const InventoryManager = {
           </td>
           <td class="p-3 text-slate-300">${p.category || '-'}</td>
           <td class="p-3 text-right font-mono">
-            <div class="font-bold text-emerald-400 text-xs">MRP: ${formatLKR(p.markedPrice || p.sellingPrice)}</div>
+            ${Number(p.markedPrice || 0) > 0 ? `<div class="font-bold text-emerald-400 text-xs">MRP: ${formatLKR(p.markedPrice)}</div>` : ''}
             <div class="font-bold text-sky-400 text-xs">${I18n.t('retailTag')}: ${formatLKR(p.sellingPrice)}</div>
             <div class="font-bold text-amber-300 text-xs">${I18n.t('wholesaleTag')}: ${formatLKR(p.wholesalePrice || p.sellingPrice)}</div>
             <div class="text-slate-500 text-[10px]">Cost: ${formatLKR(p.costPrice)}</div>
@@ -220,12 +225,16 @@ const InventoryManager = {
     document.getElementById('productForm').reset();
     document.getElementById('prodIdInput').value = '';
     document.getElementById('prodNameSiInput').value = '';
+    const minStockInput = document.getElementById('prodMinStockInput');
+    if (minStockInput) minStockInput.value = '0';
+    const currentStockInput = document.getElementById('prodCurrentStockInput');
+    if (currentStockInput) currentStockInput.value = '0';
     const addStockInput = document.getElementById('prodAddStockInput');
     if (addStockInput) addStockInput.value = '';
     const previewContainer = document.getElementById('newTotalStockPreview');
     if (previewContainer) previewContainer.classList.add('hidden');
     const markedPriceInput = document.getElementById('prodMarkedPriceInput');
-    if (markedPriceInput) markedPriceInput.value = '';
+    if (markedPriceInput) markedPriceInput.value = '0';
     document.getElementById('productModal').classList.remove('hidden');
   },
 
@@ -244,10 +253,10 @@ const InventoryManager = {
     document.getElementById('prodUnitInput').value = product.unit || 'pcs';
     document.getElementById('prodCostPriceInput').value = product.costPrice || 0;
     const markedPriceInput = document.getElementById('prodMarkedPriceInput');
-    if (markedPriceInput) markedPriceInput.value = product.markedPrice || product.sellingPrice || 0;
+    if (markedPriceInput) markedPriceInput.value = (product.markedPrice !== undefined && product.markedPrice !== null) ? product.markedPrice : 0;
     document.getElementById('prodSellingPriceInput').value = product.sellingPrice || 0;
     document.getElementById('prodWholesalePriceInput').value = product.wholesalePrice || product.sellingPrice || 0;
-    document.getElementById('prodMinStockInput').value = product.minStock || 5;
+    document.getElementById('prodMinStockInput').value = (product.minStock !== undefined && product.minStock !== null) ? product.minStock : 0;
     document.getElementById('prodCurrentStockInput').value = product.currentStock || 0;
     const addStockInput = document.getElementById('prodAddStockInput');
     if (addStockInput) addStockInput.value = '';
@@ -270,7 +279,8 @@ const InventoryManager = {
     const nameVal = document.getElementById('prodNameInput').value.trim();
     const nameSiVal = document.getElementById('prodNameSiInput').value.trim();
     const sellingPriceVal = parseFloat(document.getElementById('prodSellingPriceInput').value) || 0;
-    const markedPriceVal = parseFloat(document.getElementById('prodMarkedPriceInput')?.value) || sellingPriceVal;
+    const rawMarked = document.getElementById('prodMarkedPriceInput')?.value;
+    const markedPriceVal = (rawMarked !== undefined && rawMarked !== '' && !isNaN(parseFloat(rawMarked))) ? parseFloat(rawMarked) : 0;
 
     const baseStock = parseFloat(document.getElementById('prodCurrentStockInput').value) || 0;
     const addedStock = parseFloat(document.getElementById('prodAddStockInput')?.value) || 0;
