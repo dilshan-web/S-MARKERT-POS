@@ -255,7 +255,7 @@ const InventoryManager = {
     const markedPriceInput = document.getElementById('prodMarkedPriceInput');
     if (markedPriceInput) markedPriceInput.value = (product.markedPrice !== undefined && product.markedPrice !== null) ? product.markedPrice : 0;
     document.getElementById('prodSellingPriceInput').value = product.sellingPrice || 0;
-    document.getElementById('prodWholesalePriceInput').value = product.wholesalePrice || product.sellingPrice || 0;
+    document.getElementById('prodWholesalePriceInput').value = (product.wholesalePrice !== undefined && product.wholesalePrice !== null && product.wholesalePrice !== '') ? product.wholesalePrice : '';
     document.getElementById('prodMinStockInput').value = (product.minStock !== undefined && product.minStock !== null) ? product.minStock : 0;
     document.getElementById('prodCurrentStockInput').value = product.currentStock || 0;
     const addStockInput = document.getElementById('prodAddStockInput');
@@ -297,7 +297,15 @@ const InventoryManager = {
       costPrice: parseFloat(document.getElementById('prodCostPriceInput').value) || 0,
       markedPrice: markedPriceVal,
       sellingPrice: sellingPriceVal,
-      wholesalePrice: parseFloat(document.getElementById('prodWholesalePriceInput').value) || sellingPriceVal,
+      wholesalePrice: (function() {
+        const wsField = document.getElementById('prodWholesalePriceInput');
+        const wsRaw = wsField ? wsField.value.trim() : '';
+        if (wsRaw !== '' && !isNaN(parseFloat(wsRaw))) {
+          return parseFloat(wsRaw);
+        }
+        // Auto-calculate: if MRP(markedPrice) > 0 → wholesale = MRP * 0.90; else = sellingPrice
+        return markedPriceVal > 0 ? Math.round(markedPriceVal * 0.90 * 100) / 100 : sellingPriceVal;
+      })(),
       minStock: parseFloat(document.getElementById('prodMinStockInput').value) || 0,
       currentStock: finalStock,
       expiryDate: document.getElementById('prodExpiryDateInput').value || null,
@@ -340,7 +348,7 @@ const InventoryManager = {
         oldProd.sellingPrice !== productData.sellingPrice ||
         oldProd.costPrice !== productData.costPrice ||
         oldProd.wholesalePrice !== productData.wholesalePrice ||
-        (oldProd.markedPrice || oldProd.sellingPrice) !== productData.markedPrice
+        oldProd.markedPrice !== productData.markedPrice
       )) {
         AuthManager.requireAdminAuth({
           actionName: 'Modify Product Prices',
@@ -638,7 +646,14 @@ const InventoryManager = {
     };
 
     if (!isNaN(retailVal) && retailVal > 0) updates.sellingPrice = retailVal;
-    if (!isNaN(wholesaleVal) && wholesaleVal > 0) updates.wholesalePrice = wholesaleVal;
+    // Fix: allow wholesalePrice=0 explicitly; also auto-calculate from MRP if wholesale left blank
+    const wsRaw = document.getElementById('quickStockWholesaleInput')?.value?.trim();
+    if (wsRaw !== '' && wsRaw !== undefined && !isNaN(wholesaleVal) && wholesaleVal >= 0) {
+      updates.wholesalePrice = wholesaleVal;
+    } else if (wsRaw === '' && !isNaN(retailVal) && retailVal > 0) {
+      // Auto-calculate wholesale as 90% of retail if field left empty
+      updates.wholesalePrice = Math.round(retailVal * 0.90 * 100) / 100;
+    }
     if (!isNaN(costVal) && costVal > 0) updates.costPrice = costVal;
 
     await db.products.update(id, updates);

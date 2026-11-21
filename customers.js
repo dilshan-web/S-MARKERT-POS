@@ -156,8 +156,11 @@ const CustomerManager = {
     tbody.innerHTML = filtered.map(c => `
       <tr class="border-b border-slate-800/80 hover:bg-slate-800/40 text-xs">
         <td class="p-3.5">
-          <div class="font-extrabold text-slate-100 text-sm">${c.name}</div>
-          <div class="text-slate-400 text-[11px] font-mono">📱 ${c.phone}</div>
+          <div class="font-extrabold text-slate-100 text-sm flex items-center gap-1.5">
+            ${c.isSchool || c.schoolCode ? `<span class="px-1.5 py-0.5 bg-sky-950 text-sky-300 border border-sky-800 rounded font-mono text-[10px]">🏫 ${c.schoolCode || 'SCHOOL'}</span>` : ''}
+            <span>${c.name}</span>
+          </div>
+          <div class="text-slate-400 text-[11px] font-mono">📱 ${c.phone || 'No phone'}</div>
         </td>
         <td class="p-3.5 text-right font-mono">
           <div class="text-base font-black text-rose-400">${formatLKR(c.creditBalance || 0)}</div>
@@ -171,11 +174,19 @@ const CustomerManager = {
           </button>
         </td>
         <td class="p-3.5 text-right">
-          <button onclick="CustomerManager.openCollectCreditModal(${c.id})" 
-                  class="px-3.5 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-extrabold transition shadow-md shadow-emerald-600/30 flex items-center gap-1.5 ml-auto">
-            <span>💰</span>
-            <span>Collect Settlement</span>
-          </button>
+          <div class="flex items-center justify-end gap-1.5 flex-wrap">
+            <button onclick="CustomerManager.openAddDirectCreditModal(${c.id})" class="px-2.5 py-1.5 bg-amber-950/80 hover:bg-amber-900 border border-amber-700 text-amber-300 rounded-xl text-xs font-bold transition flex items-center gap-1" title="Add Day Credit without POS bill">
+              <span>➕</span> <span>ණය දැමීම</span>
+            </button>
+            <button onclick="CustomerManager.openCollectCreditModal(${c.id})" 
+                    class="px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-extrabold transition shadow-md shadow-emerald-600/30 flex items-center gap-1">
+              <span>💰</span>
+              <span>අයවීම</span>
+            </button>
+            <button onclick="CustomerManager.openCustomerStatementModal(${c.id})" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition" title="View Statement Ledger">
+              <span>📋</span>
+            </button>
+          </div>
         </td>
       </tr>
     `).join('');
@@ -610,6 +621,324 @@ const CustomerManager = {
         }
       }
     });
+  },
+
+  // ==========================================
+  // DIRECT DAY CREDIT ENTRY (Without POS Invoice)
+  // Allows shop owners to record manual daily book credits on any date
+  // ==========================================
+  async openAddDirectCreditModal(id) {
+    let cust = null;
+    if (id) {
+      cust = await db.customers.get(id);
+    }
+    const modal = document.getElementById('directCreditModal');
+    if (!modal) return;
+
+    const nameEl = document.getElementById('directCreditCustName');
+    const idInput = document.getElementById('directCreditCustId');
+    const amtInput = document.getElementById('directCreditAmountInput');
+    const dateInput = document.getElementById('directCreditDateInput');
+    const refInput = document.getElementById('directCreditRefInput');
+    const notesInput = document.getElementById('directCreditNotesInput');
+
+    if (cust) {
+      if (nameEl) nameEl.textContent = `${cust.name} ${cust.phone ? '(' + cust.phone + ')' : ''}`;
+      if (idInput) idInput.value = cust.id;
+    } else {
+      if (nameEl) nameEl.textContent = 'Please select customer';
+      if (idInput) idInput.value = '';
+    }
+
+    if (amtInput) amtInput.value = '';
+    if (dateInput) dateInput.value = new Date().toISOString().slice(0, 10);
+    if (refInput) refInput.value = 'CR-' + Date.now().toString().slice(-5);
+    if (notesInput) notesInput.value = 'දෛනික පොතේ ණය (Daily Book Credit)';
+
+    modal.classList.remove('hidden');
+    if (amtInput) amtInput.focus();
+  },
+
+  async saveDirectCredit(e) {
+    if (e) e.preventDefault();
+    const idVal = document.getElementById('directCreditCustId')?.value;
+    const custId = parseInt(idVal);
+    if (!custId || isNaN(custId)) {
+      alert('කරුණාකර පාරිභෝගිකයෙකු තෝරන්න (Please select a customer).');
+      return;
+    }
+
+    const cust = await db.customers.get(custId);
+    if (!cust) {
+      alert('Customer not found in database.');
+      return;
+    }
+
+    const amount = parseFloat(document.getElementById('directCreditAmountInput')?.value) || 0;
+    if (amount <= 0) {
+      alert('කරුණාකර වලංගු ණය මුදලක් ඇතුළත් කරන්න (Please enter a valid credit amount > 0).');
+      return;
+    }
+
+    const date = document.getElementById('directCreditDateInput')?.value || new Date().toISOString().slice(0, 10);
+    const refNo = document.getElementById('directCreditRefInput')?.value.trim() || ('CR-' + Date.now().toString().slice(-6));
+    const notes = document.getElementById('directCreditNotesInput')?.value.trim() || 'Direct Day Credit Entry';
+    const currentUser = (window.AuthManager && AuthManager.currentUser) ? AuthManager.currentUser.username : 'Staff';
+
+    // 1. Record in manualCredits collection
+    const creditRecord = {
+      customerId: cust.id,
+      customerName: cust.name,
+      amount: Math.round(amount * 100) / 100,
+      date: date,
+      time: new Date().toTimeString().slice(0, 5),
+      refNo: refNo,
+      notes: notes,
+      recordedBy: currentUser,
+      type: 'manual_credit',
+      timestamp: new Date().toISOString()
+    };
+
+    if (db.manualCredits) {
+      await db.manualCredits.add(creditRecord);
+    }
+
+    // 2. Update Customer Balance
+    const currentBal = Number(cust.creditBalance || 0);
+    const newBal = Math.round((currentBal + amount) * 100) / 100;
+    await db.customers.update(cust.id, {
+      creditBalance: newBal,
+      totalSpent: Math.round(((cust.totalSpent || 0) + amount) * 100) / 100
+    });
+
+    document.getElementById('directCreditModal')?.classList.add('hidden');
+    await this.renderCreditTab();
+    await this.renderCustomerTable();
+    if (window.SchoolCreditManager) SchoolCreditManager.init();
+    if (window.SoundManager) SoundManager.playSuccessChime();
+
+    alert(`රු. ${formatLKR(amount)} ක ණය මුදල ${cust.name} ගිණුමට සාර්ථකව එකතු කරන ලදී!\nනව ණය ශේෂය: ${formatLKR(newBal)}`);
+  },
+
+  // Open Full Customer Ledger / Statement
+  async openCustomerStatementModal(id) {
+    const cust = await db.customers.get(id);
+    if (!cust) return;
+
+    const modal = document.getElementById('customerStatementModal');
+    if (!modal) return;
+
+    this.selectedCustomerIdForStatement = cust.id;
+    document.getElementById('stmtCustName').textContent = cust.name;
+    document.getElementById('stmtCustPhone').textContent = cust.phone || 'No Phone';
+    document.getElementById('stmtCustDue').textContent = formatLKR(cust.creditBalance || 0);
+
+    const tbody = document.getElementById('customerStatementTableBody');
+    if (tbody) {
+      tbody.innerHTML = `<tr><td colspan="6" class="text-center py-4 text-slate-400">Loading ledger records...</td></tr>`;
+
+      // 1. POS Credit Sales
+      const allSales = await db.sales.where('customerId').equals(cust.id).toArray();
+      // 2. Direct Manual Credits
+      const manualCredits = db.manualCredits ? await db.manualCredits.where('customerId').equals(cust.id).toArray() : [];
+      // 3. Settlement Payments
+      const payments = db.creditPayments ? await db.creditPayments.where('customerId').equals(cust.id).toArray() : [];
+
+      const ledger = [];
+      if (Number(cust.openingBalance || 0) > 0) {
+        ledger.push({
+          date: cust.createdAt ? cust.createdAt.slice(0, 10) : 'Opening',
+          ref: 'START',
+          notes: 'Opening Credit Balance (ආරම්භක ණය)',
+          debit: Number(cust.openingBalance),
+          credit: 0
+        });
+      }
+
+      allSales.forEach(s => {
+        if (s.paymentMethod === 'credit' || Number(s.creditAmount) > 0) {
+          ledger.push({
+            date: s.timestamp ? s.timestamp.slice(0, 10) : s.date,
+            ref: s.invoiceNo,
+            notes: `Store Invoice (${s.items?.length || 0} items)`,
+            debit: Number(s.creditAmount || s.grandTotal || 0),
+            credit: 0
+          });
+        }
+      });
+
+      manualCredits.forEach(m => {
+        ledger.push({
+          date: m.date,
+          ref: m.refNo || 'CREDIT',
+          notes: m.notes || 'Direct Day Credit (දෛනික ණය)',
+          debit: Number(m.amount || 0),
+          credit: 0
+        });
+      });
+
+      payments.forEach(p => {
+        ledger.push({
+          date: p.date ? p.date.slice(0, 10) : '---',
+          ref: p.receiptNo || 'REC',
+          notes: `${p.paymentMethod || 'Cash'} Settlement (ණය ගෙවීම)`,
+          debit: 0,
+          credit: Number(p.amount || 0)
+        });
+      });
+
+      ledger.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+      let runningBal = 0;
+      tbody.innerHTML = ledger.map(entry => {
+        runningBal += (entry.debit - entry.credit);
+        return `
+          <tr class="border-b border-slate-800 text-xs font-mono">
+            <td class="p-2.5 text-slate-400">${entry.date}</td>
+            <td class="p-2.5 text-sky-400 font-bold">${entry.ref}</td>
+            <td class="p-2.5 text-slate-300 font-sans">${entry.notes}</td>
+            <td class="p-2.5 text-right ${entry.debit > 0 ? 'text-amber-400 font-bold' : 'text-slate-600'}">
+              ${entry.debit > 0 ? formatLKR(entry.debit) : '-'}
+            </td>
+            <td class="p-2.5 text-right ${entry.credit > 0 ? 'text-emerald-400 font-bold' : 'text-slate-600'}">
+              ${entry.credit > 0 ? formatLKR(entry.credit) : '-'}
+            </td>
+            <td class="p-2.5 text-right font-bold text-slate-100">
+              ${formatLKR(runningBal)}
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    modal.classList.remove('hidden');
+  },
+
+  // Print Customer Statement in A4 PDF format
+  async printCustomerStatementA4(id) {
+    const custId = id || this.selectedCustomerIdForStatement;
+    const cust = await db.customers.get(custId);
+    if (!cust) return;
+
+    const storeName = (await getSetting('store_name', '')) || 'LANKA MEGA SUPERMARKET';
+    const storeAddress = (await getSetting('store_address', '')) || 'Main Street, Sri Lanka';
+    const storePhone = (await getSetting('store_phone', '')) || '011-2345678';
+
+    const allSales = await db.sales.where('customerId').equals(cust.id).toArray();
+    const manualCredits = db.manualCredits ? await db.manualCredits.where('customerId').equals(cust.id).toArray() : [];
+    const payments = db.creditPayments ? await db.creditPayments.where('customerId').equals(cust.id).toArray() : [];
+
+    const ledger = [];
+    if (Number(cust.openingBalance || 0) > 0) {
+      ledger.push({ date: cust.createdAt?.slice(0, 10) || 'Opening', ref: 'START', desc: 'Opening Balance', debit: Number(cust.openingBalance), credit: 0 });
+    }
+    allSales.forEach(s => {
+      if (s.paymentMethod === 'credit' || Number(s.creditAmount) > 0) {
+        ledger.push({ date: s.timestamp?.slice(0, 10) || s.date, ref: s.invoiceNo, desc: 'Store POS Invoice', debit: Number(s.creditAmount || s.grandTotal || 0), credit: 0 });
+      }
+    });
+    manualCredits.forEach(m => {
+      ledger.push({ date: m.date, ref: m.refNo || 'CREDIT', desc: m.notes || 'Direct Day Credit', debit: Number(m.amount || 0), credit: 0 });
+    });
+    payments.forEach(p => {
+      ledger.push({ date: p.date?.slice(0, 10) || '---', ref: p.receiptNo || 'REC', desc: 'Settlement Payment', debit: 0, credit: Number(p.amount || 0) });
+    });
+
+    ledger.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+    let runningBal = 0;
+    const rowsHtml = ledger.map(l => {
+      runningBal += (l.debit - l.credit);
+      return `
+        <tr>
+          <td>${l.date}</td>
+          <td style="font-family:monospace;font-weight:bold;">${l.ref}</td>
+          <td>${l.desc}</td>
+          <td style="text-align:right;font-family:monospace;">${l.debit > 0 ? formatLKR(l.debit) : '-'}</td>
+          <td style="text-align:right;font-family:monospace;color:#16a34a;">${l.credit > 0 ? formatLKR(l.credit) : '-'}</td>
+          <td style="text-align:right;font-family:monospace;font-weight:bold;">${formatLKR(runningBal)}</td>
+        </tr>
+      `;
+    }).join('');
+
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>Customer Credit Statement - ${cust.name}</title>
+        <style>
+          @page { size: A4 portrait; margin: 12mm; }
+          body { font-family: 'Inter', Arial, sans-serif; font-size: 11px; color: #0f172a; margin: 0; padding: 15px; }
+          .header { display: flex; justify-content: space-between; border-bottom: 2px solid #0284c7; padding-bottom: 10px; margin-bottom: 12px; }
+          .title { font-size: 18px; font-weight: 800; color: #0284c7; }
+          .cust-info { background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; margin-bottom: 15px; display: grid; grid-template-columns: 2fr 1fr; }
+          table { width: 100%; border-collapse: collapse; margin-bottom: 15px; }
+          th { background: #0f172a; color: #ffffff; text-align: left; padding: 6px 8px; font-size: 10px; }
+          td { border-bottom: 1px solid #e2e8f0; padding: 6px 8px; }
+          .footer { display: flex; justify-content: space-between; margin-top: 35px; border-top: 1px solid #cbd5e1; padding-top: 10px; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <div>
+            <div class="title">${storeName}</div>
+            <div>${storeAddress} &bull; Tel: ${storePhone}</div>
+            <div style="font-weight: bold; margin-top: 4px; color: #475569;">CUSTOMER CREDIT ACCOUNT STATEMENT (පාරිභෝගික ණය ප්‍රකාශනය)</div>
+          </div>
+          <div style="text-align: right; font-size: 10px;">
+            <div>Generated: <strong>${new Date().toLocaleString()}</strong></div>
+            <div>Account Status: <strong style="color: #dc2626;">ACTIVE</strong></div>
+          </div>
+        </div>
+
+        <div class="cust-info">
+          <div>
+            <div style="font-size: 14px; font-weight: bold; color: #0f172a;">👤 ${cust.name}</div>
+            <div>Phone: <strong>${cust.phone || '---'}</strong></div>
+            <div>Address: ${cust.address || '---'}</div>
+          </div>
+          <div style="text-align: right;">
+            <div style="font-size: 10px; color: #64748b;">TOTAL OUTSTANDING BALANCE:</div>
+            <div style="font-size: 18px; font-weight: 900; color: #dc2626; font-family: monospace;">${formatLKR(cust.creditBalance || 0)}</div>
+          </div>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Ref No</th>
+              <th>Description</th>
+              <th style="text-align: right;">Charges (Debit)</th>
+              <th style="text-align: right;">Payments (Credit)</th>
+              <th style="text-align: right;">Balance</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rowsHtml}
+          </tbody>
+        </table>
+
+        <div class="footer">
+          <div>Customer Signature: _______________________</div>
+          <div>Authorized Supermarket Sign: _______________________</div>
+        </div>
+
+        <script>
+          window.onload = function() {
+            setTimeout(function() { window.focus(); window.print(); }, 200);
+          };
+        </script>
+      </body>
+      </html>
+    `;
+
+    const printWin = window.open('', '_blank', 'width=900,height=800');
+    if (printWin) {
+      printWin.document.write(html);
+      printWin.document.close();
+    }
   }
 };
 

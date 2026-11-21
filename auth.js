@@ -415,12 +415,12 @@ const AuthManager = {
     }
 
     if (this.currentUser.role === 'manager') {
-      const allowedForManager = ['dashboard', 'pos', 'inventory', 'grn', 'customers', 'credit', 'suppliers', 'farmers', 'expenses', 'shifts', 'reports', 'allowDiscount', 'settings'];
+      const allowedForManager = ['dashboard', 'pos', 'inventory', 'grn', 'customers', 'credit', 'schoolcredit', 'suppliers', 'farmers', 'expenses', 'shifts', 'reports', 'allowDiscount', 'settings'];
       return allowedForManager.includes(permKey);
     }
 
     if (this.currentUser.role === 'cashier') {
-      const allowedForCashier = ['dashboard', 'pos', 'customers', 'credit', 'shifts'];
+      const allowedForCashier = ['dashboard', 'pos', 'customers', 'credit', 'schoolcredit', 'shifts'];
       return allowedForCashier.includes(permKey);
     }
 

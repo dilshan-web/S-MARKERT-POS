@@ -1947,10 +1947,18 @@ ${closeHtml}`);
             <div class="text-[11px] text-slate-400">${dateStr} &bull; Cashier: <strong>${sale.cashierName || 'Cashier'}</strong></div>
             <div class="text-[11px] text-slate-400">Customer: <strong>${sale.customerName || 'Walk-in Customer'}</strong></div>
           </div>
-          <button onclick="POSManager.reprintPastReceipt('${sale.id}')" class="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white font-bold rounded-xl text-xs transition flex items-center gap-1.5 shadow-md shadow-sky-600/30">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
-            <span>Reprint Receipt</span>
-          </button>
+          <div class="flex items-center gap-1.5 flex-wrap">
+            <button onclick="POSManager.reprintPastReceipt('${sale.id}')" class="px-2.5 py-1.5 bg-sky-600 hover:bg-sky-500 text-white font-bold rounded-xl text-xs transition flex items-center gap-1 shadow-md shadow-sky-600/30">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
+              <span>Reprint</span>
+            </button>
+            <button onclick="POSManager.editInvoice('${sale.id}')" class="px-2.5 py-1.5 bg-amber-600 hover:bg-amber-500 text-white font-bold rounded-xl text-xs transition flex items-center gap-1 shadow-md shadow-amber-600/30" title="Edit bill / Load into Cart for re-billing">
+              <span>✏️</span> <span>Edit</span>
+            </button>
+            <button onclick="POSManager.deleteInvoice('${sale.id}')" class="px-2.5 py-1.5 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-xl text-xs transition flex items-center gap-1 shadow-md shadow-rose-600/30" title="Delete Mistaken Invoice Permanently">
+              <span>🗑️</span> <span>Delete</span>
+            </button>
+          </div>
         </div>
 
         <!-- Sale Items List -->
@@ -2016,6 +2024,163 @@ ${closeHtml}`);
         </div>
       </div>
     `;
+  },
+
+  // ==========================================
+  // INVOICE DELETION & EDIT / RECALL TO CART
+  // ==========================================
+  async deleteInvoice(saleId) {
+    const sale = await db.sales.get(saleId);
+    if (!sale) return;
+
+    AuthManager.requireAdminAuth({
+      actionName: 'Delete Sales Invoice',
+      actionDesc: `Permanently delete invoice ${sale.invoiceNo} and reverse stock/credit`,
+      requiredPerm: 'allowDelete',
+      onAuthorized: async () => {
+        const confirmMsg = `⚠️ අවවාදයයි (Warning):\n\nමෙම බිල (${sale.invoiceNo}) සම්පූර්ණයෙන්ම මකා දමනවාද?\n\n- විකුණන ලද භාණ්ඩ නැවත Inventory Stock එකට එකතු වේ.\n- ණය බිලක් නම් පාරිභෝගිකයාගේ ණය ශේෂයෙන් අඩු වේ.\n\nමෙය ආපසු හැරවිය නොහැක.`;
+        if (!confirm(confirmMsg)) return;
+
+        try {
+          // 1. Reverse stock for each item in saleItems
+          const items = await db.saleItems.where('saleId').equals(saleId).toArray();
+          for (const item of items) {
+            if (item.productId) {
+              const prod = await db.products.get(item.productId);
+              if (prod) {
+                const restoredStock = Math.round(((prod.currentStock || 0) + Number(item.qty || 0)) * 100) / 100;
+                await db.products.update(item.productId, { currentStock: restoredStock });
+              }
+            }
+            await db.saleItems.delete(item.id);
+          }
+
+          // 2. Reverse customer credit if this was a credit sale
+          if (sale.customerId && (sale.paymentMethod === 'credit' || Number(sale.creditAmount) > 0)) {
+            const cust = await db.customers.get(sale.customerId);
+            if (cust) {
+              const reversedDue = Number(sale.creditAmount || sale.grandTotal || 0);
+              const newBal = Math.max(0, Math.round(((cust.creditBalance || 0) - reversedDue) * 100) / 100);
+              await db.customers.update(cust.id, { creditBalance: newBal });
+            }
+          }
+
+          // 3. Delete returns associated with this invoice
+          const retItems = await db.returns.where('invoiceNo').equals(sale.invoiceNo).toArray();
+          for (const r of retItems) {
+            await db.returns.delete(r.id);
+          }
+
+          // 4. Delete the sale record itself
+          await db.sales.delete(saleId);
+
+          // 5. Audit log
+          try {
+            await db.stockAdjustments.add({
+              date: new Date().toISOString(),
+              productId: 0,
+              productName: `Invoice Deleted: ${sale.invoiceNo}`,
+              type: 'in',
+              qty: 0,
+              reason: `Mistaken Invoice ${sale.invoiceNo} deleted by ${AuthManager.currentUser?.username || 'admin'}`,
+              user: AuthManager.currentUser?.username || 'admin'
+            });
+          } catch (e) {}
+
+          if (window.SoundManager) SoundManager.playSuccessChime();
+          alert(`බිල (${sale.invoiceNo}) සාර්ථකව මකා දමා stock යාවත්කාලීන කරන ලදී! (Invoice deleted and stock restored)`);
+
+          await this.renderSalesHistory();
+          const detailsPane = document.getElementById('salesHistoryDetailsPane');
+          if (detailsPane) {
+            detailsPane.innerHTML = `<div class="flex-1 flex items-center justify-center text-xs text-slate-500 text-center p-6">Invoice ${sale.invoiceNo} deleted successfully.</div>`;
+          }
+          await this.renderProductGrid();
+        } catch (err) {
+          console.error('Error deleting invoice:', err);
+          alert('Error deleting invoice: ' + err.message);
+        }
+      }
+    });
+  },
+
+  async editInvoice(saleId) {
+    const sale = await db.sales.get(saleId);
+    if (!sale) return;
+
+    AuthManager.requireAdminAuth({
+      actionName: 'Edit / Recall Sales Invoice',
+      actionDesc: `Load invoice ${sale.invoiceNo} into active POS cart for corrections`,
+      requiredPerm: 'allowPriceEdit',
+      onAuthorized: async () => {
+        const ask = confirm(`බිල (${sale.invoiceNo}) සංස්කරණය සඳහා නැවත POS Billing Cart එකට ගන්නද?\n\n[OK] ක්ලික් කළහොත්:\n1. මෙම පැරණි බිලෙහි Stock & Credit ආපසු හැරවේ.\n2. සියලුම භාණ්ඩ POS තිරයට පැමිණෙන අතර, ඔබට අවශ්‍ය පරිදි අඩු/වැඩි කර අලුතින් නිවැරදි බිල නිකුත් කළ හැක.`);
+        if (!ask) return;
+
+        try {
+          const items = await db.saleItems.where('saleId').equals(saleId).toArray();
+
+          // 1. Reverse stock
+          for (const item of items) {
+            if (item.productId) {
+              const prod = await db.products.get(item.productId);
+              if (prod) {
+                const restoredStock = Math.round(((prod.currentStock || 0) + Number(item.qty || 0)) * 100) / 100;
+                await db.products.update(item.productId, { currentStock: restoredStock });
+              }
+            }
+            await db.saleItems.delete(item.id);
+          }
+
+          // 2. Reverse customer credit if credit
+          if (sale.customerId && (sale.paymentMethod === 'credit' || Number(sale.creditAmount) > 0)) {
+            const cust = await db.customers.get(sale.customerId);
+            if (cust) {
+              const reversedDue = Number(sale.creditAmount || sale.grandTotal || 0);
+              const newBal = Math.max(0, Math.round(((cust.creditBalance || 0) - reversedDue) * 100) / 100);
+              await db.customers.update(cust.id, { creditBalance: newBal });
+            }
+          }
+
+          // 3. Delete old sale record
+          await db.sales.delete(saleId);
+
+          // 4. Load items into Cart
+          this.cart = items.map(it => ({
+            productId: it.productId,
+            sku: it.sku || '',
+            name: it.productName,
+            nameSi: it.nameSi || it.productName,
+            unit: it.unit || 'pcs',
+            price: Number(it.price) || 0,
+            retailPrice: Number(it.retailPrice || it.price) || 0,
+            wholesalePrice: Number(it.wholesalePrice || it.price) || 0,
+            markedPrice: Number(it.markedPrice) || 0,
+            qty: Number(it.qty) || 1,
+            discountType: it.discountType || 'none',
+            discountValue: Number(it.discountValue) || 0,
+            lineDiscount: Number(it.lineDiscount) || 0,
+            total: Number(it.total) || (Number(it.price) * Number(it.qty)),
+            isWholesale: !!it.isWholesale
+          }));
+
+          if (sale.customerId) {
+            this.selectedCustomer = await db.customers.get(sale.customerId);
+          } else {
+            this.selectedCustomer = null;
+          }
+
+          document.getElementById('salesHistoryModal')?.classList.add('hidden');
+          if (window.App) App.switchTab('pos');
+          this.renderCart();
+          this.updateCustomerSelectionUI();
+          SoundManager.playSuccessChime();
+          alert(`බිල (${sale.invoiceNo}) POS Cart එකට ගන්නා ලදී. දැන් අවශ්‍ය සංශෝධන සිදුකර බිල නැවත ලබා දෙන්න.`);
+        } catch (err) {
+          console.error('Error recalling invoice to cart:', err);
+          alert('Error: ' + err.message);
+        }
+      }
+    });
   },
 
   async promptReturnItem(saleId, itemId) {

@@ -1,4 +1,4 @@
-﻿const CACHE_NAME = 'lankapos-v3.6.0-offline-pwa';
+﻿const CACHE_NAME = 'lankapos-v3.7.0-offline-pwa';
 
 // Core essential static assets
 const CORE_ASSETS = [
@@ -115,3 +115,4 @@ self.addEventListener('fetch', (event) => {
     })
   );
 });
+

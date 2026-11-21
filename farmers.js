@@ -18,6 +18,11 @@ const FarmerManager = {
   farmerSearchQuery: '',
   historySearchQuery: '',
   historyFilterStatus: 'all',
+  historyViewMode: 'slips', // 'slips' | 'vegetables'
+  vegSearchQuery: '',
+  vegFilterFarmerId: 'all',
+  vegFilterFromDate: '',
+  vegFilterToDate: '',
   cachedProducts: [],
   currentSearchResults: [],
   activeSearchHighlightedIndex: -1,
@@ -1053,8 +1058,16 @@ const FarmerManager = {
             });
           }
         } else {
-          // Check if product with this exact name exists
-          const existing = await db.products.where('name').equalsIgnoreCase(item.name).first();
+          // Check if product with this exact name or Sinhala name exists
+          const allProds = await db.products.toArray();
+          const cleanItemName = (item.name || '').trim().toLowerCase();
+          const existing = allProds.find(p => {
+            const pName = (p.name || '').trim().toLowerCase();
+            const pNameSi = (p.nameSi || '').trim().toLowerCase();
+            return pName === cleanItemName || pNameSi === cleanItemName ||
+                   (cleanItemName.length > 2 && (pName.includes(cleanItemName) || pNameSi.includes(cleanItemName)));
+          });
+
           if (existing) {
             await db.products.update(existing.id, {
               currentStock: Math.round(((existing.currentStock || 0) + item.weightKg) * 100) / 100,
@@ -1375,16 +1388,27 @@ const FarmerManager = {
         <tr class="border-b border-slate-800/80 hover:bg-slate-800/40 text-xs transition">
           <td class="p-3 font-mono font-bold text-sky-400">${i.slipNo}</td>
           <td class="p-3">
-            <div class="text-slate-200 font-mono text-[11px]">${i.date} &bull; ${i.time || ''}</div>
+            <div class="text-slate-200 font-mono text-[11px] font-bold">${i.date} &bull; ${i.time || ''}</div>
             <div class="text-[10px] text-slate-500">කැෂියර්: @${i.receivedBy || 'staff'}</div>
           </td>
           <td class="p-3">
             <div class="font-bold text-slate-100">${i.farmerName}</div>
             <div class="text-[11px] font-mono text-slate-400">${i.farmerPhone || '-'}</div>
           </td>
-          <td class="p-3 max-w-xs">
-            <div class="truncate text-slate-300 font-medium" title="${itemsSummary}">${itemsSummary}</div>
-            <div class="text-[10px] text-sky-400 font-mono font-bold">${i.totalWeight ? i.totalWeight.toFixed(2) : '-'} kg Total</div>
+          <td class="p-3 min-w-[260px] max-w-sm">
+            <div class="space-y-1">
+              ${(i.items || []).map(it => `
+                <div class="flex items-center justify-between gap-1 text-[11px] bg-slate-950/80 px-2 py-1 rounded border border-slate-800">
+                  <span class="font-bold text-slate-100 truncate max-w-[110px]" title="${it.name}">🥕 ${it.name}</span>
+                  <span class="text-amber-300 font-mono font-bold whitespace-nowrap bg-amber-950/40 px-1 rounded">${it.weightKg || 0}kg &times; Rs. ${Number(it.unitPrice || 0).toFixed(2)}</span>
+                  <span class="font-bold text-emerald-400 font-mono whitespace-nowrap">= Rs. ${Number(it.lineTotal || ((it.weightKg || 0) * (it.unitPrice || 0))).toFixed(2)}</span>
+                </div>
+              `).join('')}
+            </div>
+            <div class="mt-1 flex items-center justify-between text-[10px] text-sky-400 font-mono font-bold px-1">
+              <span>එකතුව (Total Weight):</span>
+              <span>${i.totalWeight ? Number(i.totalWeight).toFixed(2) : '-'} kg</span>
+            </div>
           </td>
           <td class="p-3 text-right font-mono font-bold text-slate-100">${formatLKR(i.grandTotal)}</td>
           <td class="p-3 text-right font-mono font-bold ${Number(i.balanceAmount) > 0 ? 'text-amber-400' : 'text-slate-500'}">
@@ -1392,18 +1416,218 @@ const FarmerManager = {
           </td>
           <td class="p-3 text-center">${statusBadge}</td>
           <td class="p-3 text-right space-x-1 whitespace-nowrap">
+            <button type="button" onclick="FarmerManager.viewIntakeSlipDetails('${i.id}')" class="p-1.5 bg-sky-950/80 hover:bg-sky-900 border border-sky-800 text-sky-300 rounded-lg transition cursor-pointer" title="සම්පූර්ණ විස්තරය බැලීම (View Details)">
+              👁️
+            </button>
             ${Number(i.balanceAmount) > 0 ? `
               <button type="button" onclick="FarmerManager.openPaymentModal(${i.farmerId}, '${i.id}')" class="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition cursor-pointer" title="මුදල් ගෙවන්න">
                 ගෙවීම
               </button>
             ` : ''}
+            <button type="button" onclick="FarmerManager.openFarmerReturnModal(${i.farmerId}, '${i.id}')" class="px-2 py-1 bg-amber-950/80 hover:bg-amber-900 border border-amber-700 text-amber-300 rounded-lg text-xs font-bold transition cursor-pointer" title="එළවළු ආපසු බාරදීම (Return vegetables)">
+              🔄 ආපසු
+            </button>
             <button type="button" onclick="FarmerManager.printIntakeSlipById('${i.id}')" class="p-1.5 bg-slate-800 hover:bg-sky-600 text-slate-300 hover:text-white rounded-lg transition cursor-pointer" title="රිසිට්පත මුද්‍රණය (Print Slip)">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
+            </button>
+            <button type="button" onclick="FarmerManager.deleteIntakeSlip('${i.id}')" class="p-1.5 bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 rounded-lg transition cursor-pointer" title="මකා දැමීම (Delete Slip)">
+              🗑️
             </button>
           </td>
         </tr>
       `;
     }).join('');
+  },
+
+  // View full intake slip details modal
+  async viewIntakeSlipDetails(id) {
+    const intake = await db.farmerIntakes.get(id);
+    if (!intake) {
+      alert('Intake slip not found.');
+      return;
+    }
+
+    const modal = document.getElementById('farmerIntakeDetailModal');
+    if (!modal) return;
+
+    document.getElementById('intakeDetailSlipNo').textContent = intake.slipNo || '---';
+    document.getElementById('intakeDetailDate').textContent = `${intake.date} ${intake.time || ''}`;
+    document.getElementById('intakeDetailFarmer').textContent = `${intake.farmerName} (${intake.farmerPhone || '-'})`;
+    document.getElementById('intakeDetailStaff').textContent = `@${intake.receivedBy || 'Staff'}`;
+    document.getElementById('intakeDetailGrandTotal').textContent = formatLKR(intake.grandTotal || 0);
+    document.getElementById('intakeDetailPaid').textContent = formatLKR(intake.paidAmount || 0);
+    document.getElementById('intakeDetailBalance').textContent = formatLKR(intake.balanceAmount || 0);
+    document.getElementById('intakeDetailPrintBtn').onclick = () => this.printIntakeSlipById(intake.id);
+
+    const tbody = document.getElementById('intakeDetailItemsTableBody');
+    if (tbody) {
+      tbody.innerHTML = (intake.items || []).map((it, idx) => `
+        <tr class="border-b border-slate-800 text-xs">
+          <td class="p-2.5 text-slate-400 font-mono">${idx + 1}</td>
+          <td class="p-2.5 font-bold text-slate-100">${it.name}</td>
+          <td class="p-2.5 text-right font-mono text-sky-400 font-bold">${it.weightKg} kg</td>
+          <td class="p-2.5 text-right font-mono text-amber-300 font-bold">Rs. ${Number(it.unitPrice).toFixed(2)}</td>
+          <td class="p-2.5 text-right font-mono text-emerald-400 font-black">Rs. ${Number(it.lineTotal || (it.weightKg * it.unitPrice)).toFixed(2)}</td>
+          <td class="p-2.5 text-right font-mono text-slate-400">${it.retailPrice ? 'Rs. ' + Number(it.retailPrice).toFixed(2) : '-'}</td>
+        </tr>
+      `).join('');
+    }
+
+    modal.classList.remove('hidden');
+  },
+
+  // Toggle between Slips view and Vegetable Ledger view
+  switchHistoryView(mode) {
+    this.historyViewMode = mode;
+    const slipsView = document.getElementById('farmerHistorySlipsView');
+    const vegView = document.getElementById('farmerHistoryVegView');
+    const btnSlips = document.getElementById('farmerHistTab_slips');
+    const btnVeg = document.getElementById('farmerHistTab_veg');
+
+    if (mode === 'slips') {
+      if (slipsView) slipsView.classList.remove('hidden');
+      if (vegView) vegView.classList.add('hidden');
+      if (btnSlips) {
+        btnSlips.className = 'px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 bg-sky-600 text-white shadow-md shadow-sky-600/30';
+      }
+      if (btnVeg) {
+        btnVeg.className = 'px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 text-slate-400 hover:text-white hover:bg-slate-800';
+      }
+      this.renderHistoryTable();
+    } else {
+      if (slipsView) slipsView.classList.add('hidden');
+      if (vegView) vegView.classList.remove('hidden');
+      if (btnSlips) {
+        btnSlips.className = 'px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 text-slate-400 hover:text-white hover:bg-slate-800';
+      }
+      if (btnVeg) {
+        btnVeg.className = 'px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 bg-sky-600 text-white shadow-md shadow-sky-600/30';
+      }
+      this.populateVegHistoryFarmersFilter();
+      this.renderVegetablesLedgerTable();
+    }
+  },
+
+  async populateVegHistoryFarmersFilter() {
+    const sel = document.getElementById('vegHistoryFarmerFilter');
+    if (!sel || sel.children.length > 1) return;
+    const farmers = await db.farmers.toArray();
+    farmers.forEach(f => {
+      const opt = document.createElement('option');
+      opt.value = f.id;
+      opt.textContent = `${f.name} (${f.phone || ''})`;
+      sel.appendChild(opt);
+    });
+  },
+
+  // Vegetable-by-Vegetable History Ledger (ගොවීන්ගෙන් ගෙනාපු එළවළු වර්ග, ගත් මිල, බර සහ දිනය ඉතිහාසය)
+  async renderVegetablesLedgerTable() {
+    const tbody = document.getElementById('farmerVegLedgerTableBody');
+    if (!tbody) return;
+
+    let intakes = await db.farmerIntakes.reverse().toArray();
+
+    // Flatten all items across intakes with parent metadata
+    let rows = [];
+    intakes.forEach(i => {
+      (i.items || []).forEach(it => {
+        rows.push({
+          intakeId: i.id,
+          slipNo: i.slipNo,
+          date: i.date,
+          time: i.time,
+          farmerId: i.farmerId,
+          farmerName: i.farmerName,
+          farmerPhone: i.farmerPhone,
+          receivedBy: i.receivedBy,
+          name: it.name,
+          weightKg: Number(it.weightKg || it.weight || 0),
+          unitPrice: Number(it.unitPrice || 0),
+          lineTotal: Number(it.lineTotal || ((it.weightKg || 0) * (it.unitPrice || 0))),
+          retailPrice: it.retailPrice ? Number(it.retailPrice) : null,
+          wholesalePrice: it.wholesalePrice ? Number(it.wholesalePrice) : null
+        });
+      });
+    });
+
+    // Filter by search query (e.g. vegetable name)
+    const vegQuery = (this.vegSearchQuery || '').toLowerCase().trim();
+    if (vegQuery) {
+      rows = rows.filter(r =>
+        (r.name && r.name.toLowerCase().includes(vegQuery)) ||
+        (r.farmerName && r.farmerName.toLowerCase().includes(vegQuery)) ||
+        (r.slipNo && r.slipNo.toLowerCase().includes(vegQuery))
+      );
+    }
+
+    // Filter by Farmer
+    if (this.vegFilterFarmerId && this.vegFilterFarmerId !== 'all') {
+      rows = rows.filter(r => String(r.farmerId) === String(this.vegFilterFarmerId));
+    }
+
+    // Filter by From Date
+    if (this.vegFilterFromDate) {
+      rows = rows.filter(r => r.date >= this.vegFilterFromDate);
+    }
+    // Filter by To Date
+    if (this.vegFilterToDate) {
+      rows = rows.filter(r => r.date <= this.vegFilterToDate);
+    }
+
+    // Update KPI stats
+    const totalWeight = rows.reduce((s, r) => s + r.weightKg, 0);
+    const totalCost = rows.reduce((s, r) => s + r.lineTotal, 0);
+    const avgPrice = totalWeight > 0 ? (totalCost / totalWeight) : 0;
+
+    const elWeight = document.getElementById('vegLedgerTotalWeight');
+    const elCost = document.getElementById('vegLedgerTotalCost');
+    const elAvg = document.getElementById('vegLedgerAvgPrice');
+    const elCount = document.getElementById('vegLedgerRowCount');
+
+    if (elWeight) elWeight.textContent = `${totalWeight.toFixed(2)} kg`;
+    if (elCost) elCost.textContent = formatLKR(totalCost);
+    if (elAvg) elAvg.textContent = `Rs. ${avgPrice.toFixed(2)} / kg`;
+    if (elCount) elCount.textContent = `${rows.length} records`;
+
+    if (rows.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="8" class="text-center py-8 text-slate-500 text-xs">එළවළු දත්ත කිසිවක් හමු නොවීය (No vegetable records found).</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = rows.map(r => `
+      <tr class="border-b border-slate-800/80 hover:bg-slate-800/40 text-xs transition">
+        <td class="p-3 font-mono text-slate-300">
+          <div class="font-bold">${r.date}</div>
+          <div class="text-[10px] text-slate-500">${r.time || ''}</div>
+        </td>
+        <td class="p-3">
+          <div class="font-bold text-slate-100">${r.farmerName}</div>
+          <div class="text-[10px] text-slate-400 font-mono">${r.farmerPhone || '-'}</div>
+        </td>
+        <td class="p-3">
+          <div class="font-extrabold text-amber-300 text-sm flex items-center gap-1.5">
+            <span>🥕</span> <span>${r.name}</span>
+          </div>
+        </td>
+        <td class="p-3 text-right font-mono font-bold text-sky-400 text-sm">
+          ${r.weightKg.toFixed(2)} kg
+        </td>
+        <td class="p-3 text-right font-mono font-black text-amber-400 text-sm bg-amber-950/20">
+          Rs. ${r.unitPrice.toFixed(2)}
+        </td>
+        <td class="p-3 text-right font-mono font-black text-emerald-400 text-sm">
+          ${formatLKR(r.lineTotal)}
+        </td>
+        <td class="p-3 font-mono text-sky-400 text-[11px] font-bold">
+          ${r.slipNo}
+        </td>
+        <td class="p-3 text-right">
+          <button type="button" onclick="FarmerManager.viewIntakeSlipDetails('${r.intakeId}')" class="px-2 py-1 bg-slate-800 hover:bg-sky-600 text-slate-200 hover:text-white rounded-lg text-xs font-bold transition cursor-pointer">
+            👁️ ස්ලිප් එක
+          </button>
+        </td>
+      </tr>
+    `).join('');
   },
 
   // =========================================================
@@ -1818,6 +2042,286 @@ const FarmerManager = {
     `;
 
     this._printContent(html, thermalWidth, `Payment Voucher - ${payment.paymentNo}`);
+  },
+
+  // =========================================================
+  // DELETE MISTAKEN FARMER INTAKE SLIP
+  // =========================================================
+  async deleteIntakeSlip(intakeId) {
+    let intake = await db.farmerIntakes.get(intakeId);
+    if (!intake && !isNaN(Number(intakeId))) intake = await db.farmerIntakes.get(Number(intakeId));
+    if (!intake) return;
+
+    AuthManager.requireAdminAuth({
+      actionName: 'Delete Farmer Intake Slip',
+      actionDesc: `Permanently delete intake slip ${intake.slipNo} for farmer ${intake.farmerName}`,
+      requiredPerm: 'allowDelete',
+      onAuthorized: async () => {
+        const msg = `⚠️ අවවාදයයි (Warning):\n\nමෙම එළවළු බාරගැනීමේ බිල (${intake.slipNo}) මකා දමනවාද?\n\n- ගොවියාගේ ශේෂයෙන් රු. ${formatLKR(intake.balanceAmount || 0)} අඩු වේ.\n- එළවළු තොගය (Stock) Inventory එකෙන් අඩු වේ.\n\nමෙය ආපසු හැරවිය නොහැක.`;
+        if (!confirm(msg)) return;
+
+        try {
+          // 1. Reverse stock
+          if (intake.items && Array.isArray(intake.items)) {
+            for (const it of intake.items) {
+              const qty = Number(it.weightKg || 0);
+              if (it.productId) {
+                const prod = await db.products.get(it.productId);
+                if (prod) {
+                  const newStk = Math.max(0, Math.round(((prod.currentStock || 0) - qty) * 100) / 100);
+                  await db.products.update(it.productId, { currentStock: newStk });
+                }
+              }
+            }
+          }
+
+          // 2. Reverse farmer balance
+          if (intake.farmerId) {
+            const farmer = await db.farmers.get(intake.farmerId);
+            if (farmer) {
+              const revDue = Number(intake.balanceAmount || 0);
+              const revTotal = Number(intake.grandTotal || 0);
+              const newBal = Math.max(0, Math.round(((farmer.outstandingBalance || 0) - revDue) * 100) / 100);
+              const newSupplied = Math.max(0, Math.round(((farmer.totalSupplied || 0) - revTotal) * 100) / 100);
+              await db.farmers.update(intake.farmerId, {
+                outstandingBalance: newBal,
+                totalSupplied: newSupplied
+              });
+            }
+          }
+
+          // 3. Delete intake
+          await db.farmerIntakes.delete(intake.id || intakeId);
+
+          if (window.SoundManager) SoundManager.playSuccessChime();
+          alert(`බිල (${intake.slipNo}) සාර්ථකව මකා දමන ලදී! (Intake slip deleted and stock/balance reversed)`);
+
+          await this.renderSummaryCards();
+          await this.renderHistoryTable();
+          await this.renderFarmersTable();
+          if (window.InventoryManager) InventoryManager.renderInventoryTable();
+        } catch (err) {
+          console.error('Error deleting farmer intake:', err);
+          alert('Error: ' + err.message);
+        }
+      }
+    });
+  },
+
+  // =========================================================
+  // FARMER RETURN (එළවළු ආපසු බාරදීම - Spoilage / Excess Return)
+  // =========================================================
+  async openFarmerReturnModal(farmerId, intakeId) {
+    let farmer = null;
+    if (farmerId) farmer = await db.farmers.get(farmerId);
+    let intake = null;
+    if (intakeId) {
+      intake = await db.farmerIntakes.get(intakeId);
+      if (!intake && !isNaN(Number(intakeId))) intake = await db.farmerIntakes.get(Number(intakeId));
+    }
+
+    const modal = document.getElementById('farmerReturnModal');
+    if (!modal) return;
+
+    this.selectedFarmerForReturn = farmer ? farmer.id : (intake ? intake.farmerId : null);
+
+    const farmerNameEl = document.getElementById('farmerReturnFarmerName');
+    const farmerIdInput = document.getElementById('farmerReturnFarmerId');
+    const vegSelect = document.getElementById('farmerReturnVegSelect');
+    const weightInput = document.getElementById('farmerReturnWeightInput');
+    const rateInput = document.getElementById('farmerReturnRateInput');
+    const reasonInput = document.getElementById('farmerReturnReasonInput');
+    const dateInput = document.getElementById('farmerReturnDateInput');
+
+    if (farmerNameEl) farmerNameEl.textContent = farmer ? `${farmer.name} (Due: ${formatLKR(farmer.outstandingBalance || 0)})` : (intake ? intake.farmerName : 'Select Farmer');
+    if (farmerIdInput) farmerIdInput.value = this.selectedFarmerForReturn || '';
+
+    // Populate vegetable select options from intake or inventory
+    if (vegSelect) {
+      let optionsHtml = '';
+      if (intake && intake.items && intake.items.length > 0) {
+        optionsHtml = intake.items.map(it => `
+          <option value="${it.name}" data-prod-id="${it.productId || ''}" data-rate="${it.unitPrice || 0}">
+            ${it.name} (Intake Rate: Rs. ${it.unitPrice} / kg)
+          </option>
+        `).join('');
+      } else {
+        const allProds = await db.products.toArray();
+        const fresh = allProds.filter(p => (p.category && p.category.toLowerCase().includes('fresh')) || p.unit === 'kg');
+        optionsHtml = fresh.map(p => `
+          <option value="${p.name}" data-prod-id="${p.id}" data-rate="${p.costPrice || p.sellingPrice || 0}">
+            ${p.name} (Cost: Rs. ${p.costPrice} / kg)
+          </option>
+        `).join('');
+      }
+      vegSelect.innerHTML = optionsHtml;
+      if (vegSelect.options.length > 0) {
+        const firstRate = vegSelect.options[0].getAttribute('data-rate');
+        if (rateInput && firstRate) rateInput.value = firstRate;
+      }
+      vegSelect.onchange = function() {
+        const opt = vegSelect.options[vegSelect.selectedIndex];
+        if (opt && rateInput) rateInput.value = opt.getAttribute('data-rate') || 0;
+      };
+    }
+
+    if (weightInput) weightInput.value = '';
+    if (reasonInput) reasonInput.value = 'නරක් වූ නිසා / ඉතිරි වූ නිසා ආපසු බාරදීම (Unsold / Spoilage Return)';
+    if (dateInput) dateInput.value = new Date().toISOString().slice(0, 10);
+
+    modal.classList.remove('hidden');
+    if (weightInput) weightInput.focus();
+  },
+
+  async saveFarmerReturn(e) {
+    if (e) e.preventDefault();
+    const farmerId = parseInt(document.getElementById('farmerReturnFarmerId')?.value);
+    if (!farmerId || isNaN(farmerId)) {
+      alert('කරුණාකර ගොවියා තෝරන්න (Please select a farmer).');
+      return;
+    }
+
+    const farmer = await db.farmers.get(farmerId);
+    if (!farmer) {
+      alert('Farmer record not found.');
+      return;
+    }
+
+    const vegSelect = document.getElementById('farmerReturnVegSelect');
+    const selectedOpt = vegSelect ? vegSelect.options[vegSelect.selectedIndex] : null;
+    const vegName = vegSelect ? vegSelect.value : '';
+    const prodId = selectedOpt ? parseInt(selectedOpt.getAttribute('data-prod-id')) : null;
+
+    const returnWeight = parseFloat(document.getElementById('farmerReturnWeightInput')?.value) || 0;
+    const returnRate = parseFloat(document.getElementById('farmerReturnRateInput')?.value) || 0;
+    const reason = document.getElementById('farmerReturnReasonInput')?.value.trim() || 'Returned to Farmer';
+    const date = document.getElementById('farmerReturnDateInput')?.value || new Date().toISOString().slice(0, 10);
+
+    if (returnWeight <= 0) {
+      alert('කරුණාකර ආපසු දෙන බර (kg) ඇතුළත් කරන්න (Please enter return weight > 0 kg).');
+      return;
+    }
+
+    const returnTotal = Math.round((returnWeight * returnRate) * 100) / 100;
+    const returnNo = 'FRET-' + Date.now().toString().slice(-6);
+    const currentUser = (window.AuthManager && AuthManager.currentUser) ? AuthManager.currentUser.username : 'Staff';
+
+    // 1. Deduct from Inventory Stock
+    if (prodId) {
+      const prod = await db.products.get(prodId);
+      if (prod) {
+        const newStock = Math.max(0, Math.round(((prod.currentStock || 0) - returnWeight) * 100) / 100);
+        await db.products.update(prodId, { currentStock: newStock });
+      }
+    } else {
+      const allProds = await db.products.toArray();
+      const match = allProds.find(p => p.name.toLowerCase() === vegName.toLowerCase());
+      if (match) {
+        const newStock = Math.max(0, Math.round(((match.currentStock || 0) - returnWeight) * 100) / 100);
+        await db.products.update(match.id, { currentStock: newStock });
+      }
+    }
+
+    // 2. Deduct from Farmer Payable Balance
+    const currentBal = Number(farmer.outstandingBalance || 0);
+    const newBal = Math.max(0, Math.round((currentBal - returnTotal) * 100) / 100);
+    await db.farmers.update(farmerId, {
+      outstandingBalance: newBal
+    });
+
+    // 3. Save to farmerReturns collection
+    const returnRecord = {
+      returnNo,
+      farmerId: farmer.id,
+      farmerName: farmer.name,
+      farmerPhone: farmer.phone || '',
+      produceName: vegName,
+      weightKg: returnWeight,
+      rate: returnRate,
+      totalAmount: returnTotal,
+      reason,
+      date,
+      time: new Date().toTimeString().slice(0, 5),
+      recordedBy: currentUser,
+      timestamp: new Date().toISOString()
+    };
+
+    if (db.farmerReturns) {
+      await db.farmerReturns.add(returnRecord);
+    }
+
+    document.getElementById('farmerReturnModal')?.classList.add('hidden');
+    await this.renderSummaryCards();
+    await this.renderHistoryTable();
+    await this.renderFarmersTable();
+    if (window.InventoryManager) InventoryManager.renderInventoryTable();
+    if (window.SoundManager) SoundManager.playSuccessChime();
+
+    // Print Thermal Return Note
+    this.printFarmerReturnSlip(returnRecord, newBal);
+    alert(`එළවළු ආපසු බාරදීම සාර්ථකයි!\n\n- ${vegName} (${returnWeight} kg)\n- ගොවියාගේ ගිණුමෙන් අඩු වූ මුදල: ${formatLKR(returnTotal)}\n- ඉතිරි ශේෂය: ${formatLKR(newBal)}`);
+  },
+
+  async printFarmerReturnSlip(ret, remainingBal = 0) {
+    const storeName = await getSetting('store_name', 'SUPERMARKET');
+    const phone = await getSetting('store_phone', '');
+    const thermalWidth = await getSetting('thermal_width', '80mm');
+
+    const html = `
+      <div style="text-align: center; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans Sinhala', Arial, sans-serif; font-size: 11px; line-height: 1.35; color: #000; padding: 4px;">
+        <h2 style="font-size: 15px; margin: 0; font-weight: 900; text-transform: uppercase;">${storeName}</h2>
+        ${phone ? `<div style="font-size: 10px; font-weight: bold;">Tel: ${phone}</div>` : ''}
+
+        <div style="border-top: 1.5px dashed #000; border-bottom: 1.5px dashed #000; margin: 6px 0; padding: 4px 0; font-weight: 900; font-size: 12px;">
+          FARMER PRODUCE RETURN NOTE<br>
+          <span style="font-size: 10px; font-weight: bold;">(එළවළු ආපසු බාරදීමේ රිසිට්පත)</span>
+        </div>
+
+        <div style="text-align: left; font-size: 10px; margin-bottom: 8px; line-height: 1.4;">
+          <div>Return No: <strong>${ret.returnNo}</strong></div>
+          <div>Date / Time: <strong>${ret.date} ${ret.time}</strong></div>
+          <div>Farmer: <strong>${ret.farmerName}</strong></div>
+          <div>Authorized By: @${ret.recordedBy || 'staff'}</div>
+        </div>
+
+        <table style="width: 100%; border-collapse: collapse; font-size: 10.5px; margin: 6px 0; text-align: left;">
+          <thead>
+            <tr style="border-top: 1px solid #000; border-bottom: 1px solid #000;">
+              <th style="padding: 3px 0;">Item</th>
+              <th style="text-align: center; padding: 3px 0;">Weight</th>
+              <th style="text-align: right; padding: 3px 0;">Rate</th>
+              <th style="text-align: right; padding: 3px 0;">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr style="border-bottom: 1px dashed #000;">
+              <td style="padding: 4px 0;">${ret.produceName}</td>
+              <td style="text-align: center; font-family: monospace;">${ret.weightKg} kg</td>
+              <td style="text-align: right; font-family: monospace;">Rs. ${ret.rate}</td>
+              <td style="text-align: right; font-family: monospace; font-weight: bold;">-${formatLKR(ret.totalAmount)}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div style="text-align: left; font-size: 10px; margin: 6px 0;">
+          Reason: <em>${ret.reason}</em>
+        </div>
+
+        <div style="text-align: right; font-size: 12px; font-weight: 900; border-top: 1.5px solid #000; padding-top: 4px; margin-top: 4px;">
+          TOTAL RETURN DEBIT: -${formatLKR(ret.totalAmount)}
+        </div>
+        <div style="text-align: right; font-size: 10.5px; margin-top: 2px;">
+          Updated Farmer Due: <strong>${formatLKR(remainingBal)}</strong>
+        </div>
+
+        <div style="margin-top: 20px; display: flex; justify-content: space-between; font-size: 9px;">
+          <div style="border-top: 1px solid #000; width: 45%; text-align: center; padding-top: 2px;">Shop Officer Sign</div>
+          <div style="border-top: 1px solid #000; width: 45%; text-align: center; padding-top: 2px;">Farmer Sign</div>
+        </div>
+      </div>
+    `;
+
+    this._printContent(html, thermalWidth, `Farmer Return - ${ret.returnNo}`);
   },
 
   _printContent(html, thermalWidth = '80mm', title = 'Farmer Slip') {

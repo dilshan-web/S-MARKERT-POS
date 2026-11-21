@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Central App Router, Scanner Wedge, Camera Scanner, Hotkeys & PWA Service Worker
  */
 
@@ -17,6 +17,7 @@ const App = {
     this.setupKeyboardShortcuts();
     this.setupScannerWedgeListener();
     this.setupMouseWheelScrollSupport();
+    this.setupIdleWakeupWatchers();
 
     // 2. Init Auth Manager FIRST so user can log in instantly
     try {
@@ -128,6 +129,7 @@ const App = {
       else if (tabName === 'grn' && window.GRNManager) GRNManager.init();
       else if (tabName === 'customers' && window.CustomerManager) CustomerManager.init();
       else if (tabName === 'credit' && window.CustomerManager) CustomerManager.initCreditTab();
+      else if (tabName === 'schoolcredit' && window.SchoolCreditManager) SchoolCreditManager.init();
       else if (tabName === 'suppliers' && window.SupplierManager) SupplierManager.init();
       else if (tabName === 'farmers' && window.FarmerManager) FarmerManager.init();
       else if (tabName === 'expenses' && window.ExpenseManager) ExpenseManager.init();
@@ -440,6 +442,28 @@ const App = {
           console.warn('[ServiceWorker] Registration failed:', err);
         });
     }
+  },
+
+  setupIdleWakeupWatchers() {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        console.log('[App] Resumed from idle/background state.');
+        this.startLiveClock();
+        if (window.AuthManager && AuthManager.isLoggedIn()) {
+          AuthManager.updateUI();
+          if (this.currentTab === 'pos' && window.POSManager) {
+            try {
+              POSManager.renderProductGrid();
+              POSManager.renderCart();
+            } catch (e) {}
+          }
+        }
+      }
+    });
+
+    window.addEventListener('focus', () => {
+      this.startLiveClock();
+    });
   }
 };
 
@@ -551,4 +575,3 @@ if (document.readyState === 'loading') {
 } else {
   App.init();
 }
-

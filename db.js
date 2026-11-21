@@ -24,6 +24,8 @@ const COLLECTION_NAMES = [
   'farmers',
   'farmerIntakes',
   'farmerPayments',
+  'farmerReturns',
+  'manualCredits',
   'sales',
   'saleItems',
   'returns',
@@ -588,6 +590,15 @@ class FirestoreCollection {
         this.isReady = true;
         if (this._readyResolve) { this._readyResolve(); this._readyResolve = null; }
       }
+      if (this.dbInstance && this.dbInstance.firestoreDb && this.dbInstance.sdk) {
+        if (this._reconnectTimer) clearTimeout(this._reconnectTimer);
+        this._reconnectTimer = setTimeout(() => {
+          if (navigator.onLine) {
+            console.log(`[Firestore Realtime] Attempting auto-reconnect on "${this.name}"...`);
+            this.setupRealtimeListener(this.dbInstance.firestoreDb, this.dbInstance.sdk);
+          }
+        }, 3500);
+      }
     });
   }
 
@@ -1024,9 +1035,48 @@ class FirestoreDB {
       return false;
     }
   }
+
+  reconnect() {
+    console.log('[Firestore] Reconnecting all realtime listeners and flushing offline queue...');
+    if (this.firestoreDb && this.sdk) {
+      for (const name of COLLECTION_NAMES) {
+        if (this[name] && typeof this[name].setupRealtimeListener === 'function') {
+          try {
+            this[name].setupRealtimeListener(this.firestoreDb, this.sdk);
+          } catch (e) {}
+        }
+      }
+    }
+    OfflineQueueManager.syncIfOnline(this);
+  }
 }
 
 const db = new FirestoreDB();
+
+// Global idle wake-up & reconnection watchers
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => {
+    console.log('[System] Network restored. Waking database connections...');
+    if (window.db && typeof window.db.reconnect === 'function') {
+      window.db.reconnect();
+    }
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      console.log('[System] App became visible after being idle. Refreshing database connection...');
+      if (window.db && typeof window.db.reconnect === 'function') {
+        window.db.reconnect();
+      }
+    }
+  });
+
+  window.addEventListener('focus', () => {
+    if (window.db && typeof window.db.reconnect === 'function') {
+      window.db.reconnect();
+    }
+  });
+}
 
 // Format currency as Sri Lankan Rupee (LKR / Rs. / රු.)
 function formatLKR(amount) {

@@ -26,6 +26,8 @@ const COLLECTION_NAMES = [
   'farmers',
   'farmerIntakes',
   'farmerPayments',
+  'farmerReturns',
+  'manualCredits',
   'sales',
   'saleItems',
   'returns',
@@ -76,10 +78,18 @@ const OfflineQueueManager = (function () {
       const banner = document.getElementById('offlineStatusBanner');
       if (!banner) return;
       banner.className = 'offline-banner banner-' + type;
-      banner.textContent = message;
+      banner.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:center;gap:10px;width:100%;">
+          <span>${message}</span>
+          <button type="button" onclick="document.getElementById('offlineStatusBanner').style.display='none'" style="cursor:pointer;background:rgba(255,255,255,0.22);border:none;color:#fff;border-radius:4px;padding:2px 8px;font-size:11px;font-weight:bold;">✕</button>
+        </div>
+      `;
       banner.style.display = 'flex';
       if (type === 'online') {
-        setTimeout(() => { banner.style.display = 'none'; }, 3500);
+        setTimeout(() => { if (banner.className.includes('banner-online')) banner.style.display = 'none'; }, 3500);
+      } else if (type === 'offline') {
+        // Auto-hide offline banner after 5 seconds so it never permanently blocks user view
+        setTimeout(() => { if (banner.className.includes('banner-offline')) banner.style.display = 'none'; }, 5000);
       }
     } catch (e) {}
   }
@@ -87,7 +97,24 @@ const OfflineQueueManager = (function () {
   function _loadQueue() {
     try {
       const raw = localStorage.getItem(QUEUE_KEY);
-      return raw ? JSON.parse(raw) : [];
+      if (!raw) return [];
+      let queue = JSON.parse(raw);
+      if (!Array.isArray(queue)) return [];
+
+      // Auto-purge any corrupted, oversized, or permanently failing items (like raw image base64)
+      const valid = queue.filter(op => {
+        if (!op || !op.collection || !op.docId) return false;
+        // Large store_logo objects are stored locally and do not need to block sync
+        if (op.docId === 'store_logo') return false;
+        if (op.data && JSON.stringify(op.data).length > 400000) return false;
+        if (op._retries && op._retries >= 3) return false;
+        return true;
+      });
+
+      if (valid.length !== queue.length) {
+        _saveQueue(valid);
+      }
+      return valid;
     } catch (e) { return []; }
   }
 
@@ -98,6 +125,10 @@ const OfflineQueueManager = (function () {
   }
 
   function _addToQueue(op) {
+    if (!op || !op.collection || !op.docId) return;
+    if (op.docId === 'store_logo') return;
+    if (op.data && JSON.stringify(op.data).length > 400000) return;
+
     const queue = _loadQueue();
     if (queue.length >= MAX_QUEUE_SIZE) queue.shift();
     queue.push({ ...op, _queuedAt: Date.now() });
@@ -109,7 +140,14 @@ const OfflineQueueManager = (function () {
     if (_isSyncing) return;
     const queue = _loadQueue();
     if (queue.length === 0) {
-      _showBanner('online', '\u2705 Online | Firebase connected!');
+      if (dbInstance && dbInstance.firestoreDb) {
+        _showBanner('online', '\u2705 Online | Firebase connected!');
+      }
+      return;
+    }
+
+    if (!dbInstance || !dbInstance.sdk || !dbInstance.firestoreDb) {
+      // If Firebase is not ready or offline, do not report as failure
       return;
     }
 
@@ -120,9 +158,8 @@ const OfflineQueueManager = (function () {
     for (const op of queue) {
       try {
         const { collection: col, type, docId, data } = op;
-        if (!dbInstance || !dbInstance.sdk || !dbInstance.firestoreDb) {
-          failed.push(op); continue;
-        }
+        if (docId === 'store_logo') continue;
+
         const docRef = dbInstance.sdk.doc(dbInstance.firestoreDb, col, docId);
         if (type === 'delete') {
           await dbInstance.sdk.deleteDoc(docRef);
@@ -131,7 +168,12 @@ const OfflineQueueManager = (function () {
         }
       } catch (e) {
         console.warn('[OfflineQueue] Sync failed:', op, e);
-        failed.push(op);
+        op._retries = (op._retries || 0) + 1;
+        if (op._retries < 3) {
+          failed.push(op);
+        } else {
+          console.warn('[OfflineQueue] Max retries reached, discarding op:', op);
+        }
       }
     }
 
@@ -151,23 +193,36 @@ const OfflineQueueManager = (function () {
 
     enqueue(op) { _addToQueue(op); },
 
+    clearQueue() {
+      try {
+        localStorage.removeItem(QUEUE_KEY);
+      } catch (e) {}
+      _showBanner('online', '✅ Offline sync queue cleared.');
+    },
+
+    forceSync(dbInstance) {
+      if (!dbInstance) dbInstance = window.db;
+      _syncQueue(dbInstance);
+    },
+
     init(dbInstance) {
+      const pending = _loadQueue().length;
       if (!navigator.onLine) {
-        const pending = _loadQueue().length;
-        _showBanner('offline', pending > 0
-          ? '\uD83D\uDCF5 Offline Mode | ' + pending + ' pending sync(s)'
-          : '\uD83D\uDCF5 Offline Mode - App works normally. Data syncs when online.');
+        if (pending > 0) {
+          _showBanner('offline', '\uD83D\uDCF5 Offline Mode | ' + pending + ' pending sync(s)');
+        }
       } else {
-        _syncQueue(dbInstance);
+        setTimeout(() => _syncQueue(dbInstance), 1000);
       }
       window.addEventListener('online', () => {
         console.log('[OfflineQueue] Internet restored. Syncing...');
-        setTimeout(() => _syncQueue(dbInstance), 2000);
+        setTimeout(() => _syncQueue(dbInstance), 1500);
       });
       window.addEventListener('offline', () => {
-        const pending = _loadQueue().length;
-        _showBanner('offline', '\uD83D\uDCF5 Offline Mode - App works normally. Data syncs when online.');
-        console.warn('[OfflineQueue] Internet lost. Operations will be queued.');
+        const p = _loadQueue().length;
+        if (p > 0) {
+          _showBanner('offline', '\uD83D\uDCF5 Offline Mode | ' + p + ' pending sync(s)');
+        }
       });
     },
 
@@ -536,6 +591,15 @@ class FirestoreCollection {
         isFirstSnapshot = false;
         this.isReady = true;
         if (this._readyResolve) { this._readyResolve(); this._readyResolve = null; }
+      }
+      if (this.dbInstance && this.dbInstance.firestoreDb && this.dbInstance.sdk) {
+        if (this._reconnectTimer) clearTimeout(this._reconnectTimer);
+        this._reconnectTimer = setTimeout(() => {
+          if (navigator.onLine) {
+            console.log(`[Firestore Realtime] Attempting auto-reconnect on "${this.name}"...`);
+            this.setupRealtimeListener(this.dbInstance.firestoreDb, this.dbInstance.sdk);
+          }
+        }, 3500);
       }
     });
   }
@@ -930,6 +994,17 @@ class FirestoreDB {
       let appModule = window.__FIREBASE_APP_MODULE__;
       let firestoreModule = window.__FIREBASE_FIRESTORE_MODULE__;
 
+      // Wait up to 3 seconds for window.__FIREBASE_APP_MODULE__ from CDN script if online
+      let waitCount = 0;
+      while ((!appModule || !firestoreModule) && waitCount < 15) {
+        appModule = window.__FIREBASE_APP_MODULE__;
+        firestoreModule = window.__FIREBASE_FIRESTORE_MODULE__;
+        if (appModule && firestoreModule) break;
+        if (!navigator.onLine) break; // Don't delay if completely offline
+        await new Promise(r => setTimeout(r, 200));
+        waitCount++;
+      }
+
       if (!appModule || !firestoreModule) {
         try {
           appModule = await import('https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js');
@@ -962,9 +1037,48 @@ class FirestoreDB {
       return false;
     }
   }
+
+  reconnect() {
+    console.log('[Firestore] Reconnecting all realtime listeners and flushing offline queue...');
+    if (this.firestoreDb && this.sdk) {
+      for (const name of COLLECTION_NAMES) {
+        if (this[name] && typeof this[name].setupRealtimeListener === 'function') {
+          try {
+            this[name].setupRealtimeListener(this.firestoreDb, this.sdk);
+          } catch (e) {}
+        }
+      }
+    }
+    OfflineQueueManager.syncIfOnline(this);
+  }
 }
 
 const db = new FirestoreDB();
+
+// Global idle wake-up & reconnection watchers
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => {
+    console.log('[System] Network restored. Waking database connections...');
+    if (window.db && typeof window.db.reconnect === 'function') {
+      window.db.reconnect();
+    }
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      console.log('[System] App became visible after being idle. Refreshing database connection...');
+      if (window.db && typeof window.db.reconnect === 'function') {
+        window.db.reconnect();
+      }
+    }
+  });
+
+  window.addEventListener('focus', () => {
+    if (window.db && typeof window.db.reconnect === 'function') {
+      window.db.reconnect();
+    }
+  });
+}
 
 // Format currency as Sri Lankan Rupee (LKR / Rs. / රු.)
 function formatLKR(amount) {
@@ -1629,6 +1743,7 @@ async function setSetting(key, value) {
 window.db = db;
 window.firestoreDb = db.firestoreDb;
 window.firebaseApp = db.app;
+window.OfflineQueueManager = OfflineQueueManager;
 window.getSetting = getSetting;
 window.setSetting = setSetting;
 window.formatLKR = formatLKR;
@@ -2054,12 +2169,12 @@ const AuthManager = {
     }
 
     if (this.currentUser.role === 'manager') {
-      const allowedForManager = ['dashboard', 'pos', 'inventory', 'grn', 'customers', 'credit', 'suppliers', 'farmers', 'expenses', 'shifts', 'reports', 'allowDiscount', 'settings'];
+      const allowedForManager = ['dashboard', 'pos', 'inventory', 'grn', 'customers', 'credit', 'schoolcredit', 'suppliers', 'farmers', 'expenses', 'shifts', 'reports', 'allowDiscount', 'settings'];
       return allowedForManager.includes(permKey);
     }
 
     if (this.currentUser.role === 'cashier') {
-      const allowedForCashier = ['dashboard', 'pos', 'customers', 'credit', 'shifts'];
+      const allowedForCashier = ['dashboard', 'pos', 'customers', 'credit', 'schoolcredit', 'shifts'];
       return allowedForCashier.includes(permKey);
     }
 
@@ -4596,7 +4711,7 @@ const POSManager = {
 
     const isWholesaleMode = this.pricingMode === 'wholesale';
     const unitPrice = isWholesaleMode ? (product.wholesalePrice || product.sellingPrice) : product.sellingPrice;
-    const markedPriceVal = Number(product.markedPrice) || Number(product.sellingPrice) || unitPrice;
+    const markedPriceVal = (product.markedPrice !== undefined && product.markedPrice !== null && !isNaN(Number(product.markedPrice))) ? Number(product.markedPrice) : 0;
 
     const existingIndex = this.cart.findIndex(item => item.productId === product.id);
 
@@ -4789,7 +4904,7 @@ const POSManager = {
     let totalItemDiscounts = 0;
 
     this.cart.forEach(item => {
-      const mrp = Number(item.markedPrice) || Number(item.retailPrice) || Number(item.price);
+      const mrp = (item.markedPrice !== undefined && item.markedPrice !== null && Number(item.markedPrice) > 0) ? Number(item.markedPrice) : Number(item.price);
       subtotalMRP += (mrp * item.qty);
       subtotal += (item.price * item.qty);
       totalItemDiscounts += (item.itemDiscountAmount || 0);
@@ -5409,7 +5524,8 @@ const POSManager = {
     this.lastFilteredProducts = items;
 
     grid.innerHTML = items.map(p => {
-      const isLow = p.currentStock <= p.minStock && p.currentStock > 0;
+      const minThreshold = Number(p.minStock) || 0;
+      const isLow = minThreshold > 0 && p.currentStock <= minThreshold && p.currentStock > 0;
       const isOut = p.currentStock <= 0;
       const wsPrice = p.wholesalePrice || p.sellingPrice;
 
@@ -5806,8 +5922,8 @@ const POSManager = {
     const cleanCustomer = this.cleanReceiptText(sale.customerName) || 'Walk-in Customer';
 
     const itemsRows = (sale.items || []).map((item, idx) => {
-      const mrp = Number(item.markedPrice) || Number(item.retailPrice) || Number(item.price);
-      const isDiscounted = mrp > item.price;
+      const mrp = (item.markedPrice !== undefined && item.markedPrice !== null && Number(item.markedPrice) > 0) ? Number(item.markedPrice) : 0;
+      const isDiscounted = mrp > 0 && mrp > item.price;
       const cleanItemName = this.cleanReceiptText(item.name || item.productName) || 'Item';
       const cleanUnit = this.cleanReceiptText(item.unit) || 'pcs';
       const itemDisc = Number(item.itemDiscountAmount || 0);
@@ -6251,10 +6367,18 @@ ${closeHtml}`);
             <div class="text-[11px] text-slate-400">${dateStr} &bull; Cashier: <strong>${sale.cashierName || 'Cashier'}</strong></div>
             <div class="text-[11px] text-slate-400">Customer: <strong>${sale.customerName || 'Walk-in Customer'}</strong></div>
           </div>
-          <button onclick="POSManager.reprintPastReceipt('${sale.id}')" class="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-white font-bold rounded-xl text-xs transition flex items-center gap-1.5 shadow-md shadow-sky-600/30">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
-            <span>Reprint Receipt</span>
-          </button>
+          <div class="flex items-center gap-1.5 flex-wrap">
+            <button onclick="POSManager.reprintPastReceipt('${sale.id}')" class="px-2.5 py-1.5 bg-sky-600 hover:bg-sky-500 text-white font-bold rounded-xl text-xs transition flex items-center gap-1 shadow-md shadow-sky-600/30">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
+              <span>Reprint</span>
+            </button>
+            <button onclick="POSManager.editInvoice('${sale.id}')" class="px-2.5 py-1.5 bg-amber-600 hover:bg-amber-500 text-white font-bold rounded-xl text-xs transition flex items-center gap-1 shadow-md shadow-amber-600/30" title="Edit bill / Load into Cart for re-billing">
+              <span>✏️</span> <span>Edit</span>
+            </button>
+            <button onclick="POSManager.deleteInvoice('${sale.id}')" class="px-2.5 py-1.5 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-xl text-xs transition flex items-center gap-1 shadow-md shadow-rose-600/30" title="Delete Mistaken Invoice Permanently">
+              <span>🗑️</span> <span>Delete</span>
+            </button>
+          </div>
         </div>
 
         <!-- Sale Items List -->
@@ -6320,6 +6444,163 @@ ${closeHtml}`);
         </div>
       </div>
     `;
+  },
+
+  // ==========================================
+  // INVOICE DELETION & EDIT / RECALL TO CART
+  // ==========================================
+  async deleteInvoice(saleId) {
+    const sale = await db.sales.get(saleId);
+    if (!sale) return;
+
+    AuthManager.requireAdminAuth({
+      actionName: 'Delete Sales Invoice',
+      actionDesc: `Permanently delete invoice ${sale.invoiceNo} and reverse stock/credit`,
+      requiredPerm: 'allowDelete',
+      onAuthorized: async () => {
+        const confirmMsg = `⚠️ අවවාදයයි (Warning):\n\nමෙම බිල (${sale.invoiceNo}) සම්පූර්ණයෙන්ම මකා දමනවාද?\n\n- විකුණන ලද භාණ්ඩ නැවත Inventory Stock එකට එකතු වේ.\n- ණය බිලක් නම් පාරිභෝගිකයාගේ ණය ශේෂයෙන් අඩු වේ.\n\nමෙය ආපසු හැරවිය නොහැක.`;
+        if (!confirm(confirmMsg)) return;
+
+        try {
+          // 1. Reverse stock for each item in saleItems
+          const items = await db.saleItems.where('saleId').equals(saleId).toArray();
+          for (const item of items) {
+            if (item.productId) {
+              const prod = await db.products.get(item.productId);
+              if (prod) {
+                const restoredStock = Math.round(((prod.currentStock || 0) + Number(item.qty || 0)) * 100) / 100;
+                await db.products.update(item.productId, { currentStock: restoredStock });
+              }
+            }
+            await db.saleItems.delete(item.id);
+          }
+
+          // 2. Reverse customer credit if this was a credit sale
+          if (sale.customerId && (sale.paymentMethod === 'credit' || Number(sale.creditAmount) > 0)) {
+            const cust = await db.customers.get(sale.customerId);
+            if (cust) {
+              const reversedDue = Number(sale.creditAmount || sale.grandTotal || 0);
+              const newBal = Math.max(0, Math.round(((cust.creditBalance || 0) - reversedDue) * 100) / 100);
+              await db.customers.update(cust.id, { creditBalance: newBal });
+            }
+          }
+
+          // 3. Delete returns associated with this invoice
+          const retItems = await db.returns.where('invoiceNo').equals(sale.invoiceNo).toArray();
+          for (const r of retItems) {
+            await db.returns.delete(r.id);
+          }
+
+          // 4. Delete the sale record itself
+          await db.sales.delete(saleId);
+
+          // 5. Audit log
+          try {
+            await db.stockAdjustments.add({
+              date: new Date().toISOString(),
+              productId: 0,
+              productName: `Invoice Deleted: ${sale.invoiceNo}`,
+              type: 'in',
+              qty: 0,
+              reason: `Mistaken Invoice ${sale.invoiceNo} deleted by ${AuthManager.currentUser?.username || 'admin'}`,
+              user: AuthManager.currentUser?.username || 'admin'
+            });
+          } catch (e) {}
+
+          if (window.SoundManager) SoundManager.playSuccessChime();
+          alert(`බිල (${sale.invoiceNo}) සාර්ථකව මකා දමා stock යාවත්කාලීන කරන ලදී! (Invoice deleted and stock restored)`);
+
+          await this.renderSalesHistory();
+          const detailsPane = document.getElementById('salesHistoryDetailsPane');
+          if (detailsPane) {
+            detailsPane.innerHTML = `<div class="flex-1 flex items-center justify-center text-xs text-slate-500 text-center p-6">Invoice ${sale.invoiceNo} deleted successfully.</div>`;
+          }
+          await this.renderProductGrid();
+        } catch (err) {
+          console.error('Error deleting invoice:', err);
+          alert('Error deleting invoice: ' + err.message);
+        }
+      }
+    });
+  },
+
+  async editInvoice(saleId) {
+    const sale = await db.sales.get(saleId);
+    if (!sale) return;
+
+    AuthManager.requireAdminAuth({
+      actionName: 'Edit / Recall Sales Invoice',
+      actionDesc: `Load invoice ${sale.invoiceNo} into active POS cart for corrections`,
+      requiredPerm: 'allowPriceEdit',
+      onAuthorized: async () => {
+        const ask = confirm(`බිල (${sale.invoiceNo}) සංස්කරණය සඳහා නැවත POS Billing Cart එකට ගන්නද?\n\n[OK] ක්ලික් කළහොත්:\n1. මෙම පැරණි බිලෙහි Stock & Credit ආපසු හැරවේ.\n2. සියලුම භාණ්ඩ POS තිරයට පැමිණෙන අතර, ඔබට අවශ්‍ය පරිදි අඩු/වැඩි කර අලුතින් නිවැරදි බිල නිකුත් කළ හැක.`);
+        if (!ask) return;
+
+        try {
+          const items = await db.saleItems.where('saleId').equals(saleId).toArray();
+
+          // 1. Reverse stock
+          for (const item of items) {
+            if (item.productId) {
+              const prod = await db.products.get(item.productId);
+              if (prod) {
+                const restoredStock = Math.round(((prod.currentStock || 0) + Number(item.qty || 0)) * 100) / 100;
+                await db.products.update(item.productId, { currentStock: restoredStock });
+              }
+            }
+            await db.saleItems.delete(item.id);
+          }
+
+          // 2. Reverse customer credit if credit
+          if (sale.customerId && (sale.paymentMethod === 'credit' || Number(sale.creditAmount) > 0)) {
+            const cust = await db.customers.get(sale.customerId);
+            if (cust) {
+              const reversedDue = Number(sale.creditAmount || sale.grandTotal || 0);
+              const newBal = Math.max(0, Math.round(((cust.creditBalance || 0) - reversedDue) * 100) / 100);
+              await db.customers.update(cust.id, { creditBalance: newBal });
+            }
+          }
+
+          // 3. Delete old sale record
+          await db.sales.delete(saleId);
+
+          // 4. Load items into Cart
+          this.cart = items.map(it => ({
+            productId: it.productId,
+            sku: it.sku || '',
+            name: it.productName,
+            nameSi: it.nameSi || it.productName,
+            unit: it.unit || 'pcs',
+            price: Number(it.price) || 0,
+            retailPrice: Number(it.retailPrice || it.price) || 0,
+            wholesalePrice: Number(it.wholesalePrice || it.price) || 0,
+            markedPrice: Number(it.markedPrice) || 0,
+            qty: Number(it.qty) || 1,
+            discountType: it.discountType || 'none',
+            discountValue: Number(it.discountValue) || 0,
+            lineDiscount: Number(it.lineDiscount) || 0,
+            total: Number(it.total) || (Number(it.price) * Number(it.qty)),
+            isWholesale: !!it.isWholesale
+          }));
+
+          if (sale.customerId) {
+            this.selectedCustomer = await db.customers.get(sale.customerId);
+          } else {
+            this.selectedCustomer = null;
+          }
+
+          document.getElementById('salesHistoryModal')?.classList.add('hidden');
+          if (window.App) App.switchTab('pos');
+          this.renderCart();
+          this.updateCustomerSelectionUI();
+          SoundManager.playSuccessChime();
+          alert(`බිල (${sale.invoiceNo}) POS Cart එකට ගන්නා ලදී. දැන් අවශ්‍ය සංශෝධන සිදුකර බිල නැවත ලබා දෙන්න.`);
+        } catch (err) {
+          console.error('Error recalling invoice to cart:', err);
+          alert('Error: ' + err.message);
+        }
+      }
+    });
   },
 
   async promptReturnItem(saleId, itemId) {
@@ -6480,7 +6761,8 @@ const InventoryManager = {
       totalCostVal += (Number(p.costPrice) || 0) * stock;
       totalRetailVal += (Number(p.sellingPrice) || 0) * stock;
 
-      if (stock <= (p.minStock || 0)) {
+      const minThreshold = Number(p.minStock) || 0;
+      if (minThreshold > 0 && stock <= minThreshold && stock > 0) {
         lowStockCount++;
       }
 
@@ -6519,7 +6801,10 @@ const InventoryManager = {
 
     // Apply Filter
     if (this.currentFilter === 'low') {
-      products = products.filter(p => p.currentStock <= p.minStock && p.currentStock > 0);
+      products = products.filter(p => {
+        const min = Number(p.minStock) || 0;
+        return min > 0 && p.currentStock <= min && p.currentStock > 0;
+      });
     } else if (this.currentFilter === 'out') {
       products = products.filter(p => p.currentStock <= 0);
     } else if (this.currentFilter === 'nearExpiry') {
@@ -6548,7 +6833,8 @@ const InventoryManager = {
 
     tableBody.innerHTML = products.map(p => {
       const isOut = p.currentStock <= 0;
-      const isLow = p.currentStock <= p.minStock && !isOut;
+      const minThreshold = Number(p.minStock) || 0;
+      const isLow = minThreshold > 0 && p.currentStock <= minThreshold && !isOut;
       const expDate = p.expiryDate ? new Date(p.expiryDate) : null;
       const isExpired = expDate && expDate < today;
       const isNearExpiry = expDate && expDate <= thirtyDaysAhead && !isExpired;
@@ -6567,7 +6853,7 @@ const InventoryManager = {
           </td>
           <td class="p-3 text-slate-300">${p.category || '-'}</td>
           <td class="p-3 text-right font-mono">
-            <div class="font-bold text-emerald-400 text-xs">MRP: ${formatLKR(p.markedPrice || p.sellingPrice)}</div>
+            ${Number(p.markedPrice || 0) > 0 ? `<div class="font-bold text-emerald-400 text-xs">MRP: ${formatLKR(p.markedPrice)}</div>` : ''}
             <div class="font-bold text-sky-400 text-xs">${I18n.t('retailTag')}: ${formatLKR(p.sellingPrice)}</div>
             <div class="font-bold text-amber-300 text-xs">${I18n.t('wholesaleTag')}: ${formatLKR(p.wholesalePrice || p.sellingPrice)}</div>
             <div class="text-slate-500 text-[10px]">Cost: ${formatLKR(p.costPrice)}</div>
@@ -6650,12 +6936,16 @@ const InventoryManager = {
     document.getElementById('productForm').reset();
     document.getElementById('prodIdInput').value = '';
     document.getElementById('prodNameSiInput').value = '';
+    const minStockInput = document.getElementById('prodMinStockInput');
+    if (minStockInput) minStockInput.value = '0';
+    const currentStockInput = document.getElementById('prodCurrentStockInput');
+    if (currentStockInput) currentStockInput.value = '0';
     const addStockInput = document.getElementById('prodAddStockInput');
     if (addStockInput) addStockInput.value = '';
     const previewContainer = document.getElementById('newTotalStockPreview');
     if (previewContainer) previewContainer.classList.add('hidden');
     const markedPriceInput = document.getElementById('prodMarkedPriceInput');
-    if (markedPriceInput) markedPriceInput.value = '';
+    if (markedPriceInput) markedPriceInput.value = '0';
     document.getElementById('productModal').classList.remove('hidden');
   },
 
@@ -6674,10 +6964,10 @@ const InventoryManager = {
     document.getElementById('prodUnitInput').value = product.unit || 'pcs';
     document.getElementById('prodCostPriceInput').value = product.costPrice || 0;
     const markedPriceInput = document.getElementById('prodMarkedPriceInput');
-    if (markedPriceInput) markedPriceInput.value = product.markedPrice || product.sellingPrice || 0;
+    if (markedPriceInput) markedPriceInput.value = (product.markedPrice !== undefined && product.markedPrice !== null) ? product.markedPrice : 0;
     document.getElementById('prodSellingPriceInput').value = product.sellingPrice || 0;
-    document.getElementById('prodWholesalePriceInput').value = product.wholesalePrice || product.sellingPrice || 0;
-    document.getElementById('prodMinStockInput').value = product.minStock || 5;
+    document.getElementById('prodWholesalePriceInput').value = (product.wholesalePrice !== undefined && product.wholesalePrice !== null && product.wholesalePrice !== '') ? product.wholesalePrice : '';
+    document.getElementById('prodMinStockInput').value = (product.minStock !== undefined && product.minStock !== null) ? product.minStock : 0;
     document.getElementById('prodCurrentStockInput').value = product.currentStock || 0;
     const addStockInput = document.getElementById('prodAddStockInput');
     if (addStockInput) addStockInput.value = '';
@@ -6700,7 +6990,8 @@ const InventoryManager = {
     const nameVal = document.getElementById('prodNameInput').value.trim();
     const nameSiVal = document.getElementById('prodNameSiInput').value.trim();
     const sellingPriceVal = parseFloat(document.getElementById('prodSellingPriceInput').value) || 0;
-    const markedPriceVal = parseFloat(document.getElementById('prodMarkedPriceInput')?.value) || sellingPriceVal;
+    const rawMarked = document.getElementById('prodMarkedPriceInput')?.value;
+    const markedPriceVal = (rawMarked !== undefined && rawMarked !== '' && !isNaN(parseFloat(rawMarked))) ? parseFloat(rawMarked) : 0;
 
     const baseStock = parseFloat(document.getElementById('prodCurrentStockInput').value) || 0;
     const addedStock = parseFloat(document.getElementById('prodAddStockInput')?.value) || 0;
@@ -6717,7 +7008,15 @@ const InventoryManager = {
       costPrice: parseFloat(document.getElementById('prodCostPriceInput').value) || 0,
       markedPrice: markedPriceVal,
       sellingPrice: sellingPriceVal,
-      wholesalePrice: parseFloat(document.getElementById('prodWholesalePriceInput').value) || sellingPriceVal,
+      wholesalePrice: (function() {
+        const wsField = document.getElementById('prodWholesalePriceInput');
+        const wsRaw = wsField ? wsField.value.trim() : '';
+        if (wsRaw !== '' && !isNaN(parseFloat(wsRaw))) {
+          return parseFloat(wsRaw);
+        }
+        // Auto-calculate: if MRP(markedPrice) > 0 → wholesale = MRP * 0.90; else = sellingPrice
+        return markedPriceVal > 0 ? Math.round(markedPriceVal * 0.90 * 100) / 100 : sellingPriceVal;
+      })(),
       minStock: parseFloat(document.getElementById('prodMinStockInput').value) || 0,
       currentStock: finalStock,
       expiryDate: document.getElementById('prodExpiryDateInput').value || null,
@@ -6760,7 +7059,7 @@ const InventoryManager = {
         oldProd.sellingPrice !== productData.sellingPrice ||
         oldProd.costPrice !== productData.costPrice ||
         oldProd.wholesalePrice !== productData.wholesalePrice ||
-        (oldProd.markedPrice || oldProd.sellingPrice) !== productData.markedPrice
+        oldProd.markedPrice !== productData.markedPrice
       )) {
         AuthManager.requireAdminAuth({
           actionName: 'Modify Product Prices',
@@ -6931,7 +7230,7 @@ const InventoryManager = {
     setTimeout(() => {
       document.body.classList.remove('printing-barcodes');
     }, 1000);
-  }
+  },
   async openQuickStockModal(productId) {
     let product = null;
     if (productId) {
@@ -7058,7 +7357,14 @@ const InventoryManager = {
     };
 
     if (!isNaN(retailVal) && retailVal > 0) updates.sellingPrice = retailVal;
-    if (!isNaN(wholesaleVal) && wholesaleVal > 0) updates.wholesalePrice = wholesaleVal;
+    // Fix: allow wholesalePrice=0 explicitly; also auto-calculate from MRP if wholesale left blank
+    const wsRaw = document.getElementById('quickStockWholesaleInput')?.value?.trim();
+    if (wsRaw !== '' && wsRaw !== undefined && !isNaN(wholesaleVal) && wholesaleVal >= 0) {
+      updates.wholesalePrice = wholesaleVal;
+    } else if (wsRaw === '' && !isNaN(retailVal) && retailVal > 0) {
+      // Auto-calculate wholesale as 90% of retail if field left empty
+      updates.wholesalePrice = Math.round(retailVal * 0.90 * 100) / 100;
+    }
     if (!isNaN(costVal) && costVal > 0) updates.costPrice = costVal;
 
     await db.products.update(id, updates);
@@ -7464,8 +7770,11 @@ const CustomerManager = {
     tbody.innerHTML = filtered.map(c => `
       <tr class="border-b border-slate-800/80 hover:bg-slate-800/40 text-xs">
         <td class="p-3.5">
-          <div class="font-extrabold text-slate-100 text-sm">${c.name}</div>
-          <div class="text-slate-400 text-[11px] font-mono">📱 ${c.phone}</div>
+          <div class="font-extrabold text-slate-100 text-sm flex items-center gap-1.5">
+            ${c.isSchool || c.schoolCode ? `<span class="px-1.5 py-0.5 bg-sky-950 text-sky-300 border border-sky-800 rounded font-mono text-[10px]">🏫 ${c.schoolCode || 'SCHOOL'}</span>` : ''}
+            <span>${c.name}</span>
+          </div>
+          <div class="text-slate-400 text-[11px] font-mono">📱 ${c.phone || 'No phone'}</div>
         </td>
         <td class="p-3.5 text-right font-mono">
           <div class="text-base font-black text-rose-400">${formatLKR(c.creditBalance || 0)}</div>
@@ -7479,11 +7788,19 @@ const CustomerManager = {
           </button>
         </td>
         <td class="p-3.5 text-right">
-          <button onclick="CustomerManager.openCollectCreditModal(${c.id})" 
-                  class="px-3.5 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-extrabold transition shadow-md shadow-emerald-600/30 flex items-center gap-1.5 ml-auto">
-            <span>💰</span>
-            <span>Collect Settlement</span>
-          </button>
+          <div class="flex items-center justify-end gap-1.5 flex-wrap">
+            <button onclick="CustomerManager.openAddDirectCreditModal(${c.id})" class="px-2.5 py-1.5 bg-amber-950/80 hover:bg-amber-900 border border-amber-700 text-amber-300 rounded-xl text-xs font-bold transition flex items-center gap-1" title="Add Day Credit without POS bill">
+              <span>➕</span> <span>ණය දැමීම</span>
+            </button>
+            <button onclick="CustomerManager.openCollectCreditModal(${c.id})" 
+                    class="px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-extrabold transition shadow-md shadow-emerald-600/30 flex items-center gap-1">
+              <span>💰</span>
+              <span>අයවීම</span>
+            </button>
+            <button onclick="CustomerManager.openCustomerStatementModal(${c.id})" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition" title="View Statement Ledger">
+              <span>📋</span>
+            </button>
+          </div>
         </td>
       </tr>
     `).join('');
@@ -7918,6 +8235,324 @@ const CustomerManager = {
         }
       }
     });
+  },
+
+  // ==========================================
+  // DIRECT DAY CREDIT ENTRY (Without POS Invoice)
+  // Allows shop owners to record manual daily book credits on any date
+  // ==========================================
+  async openAddDirectCreditModal(id) {
+    let cust = null;
+    if (id) {
+      cust = await db.customers.get(id);
+    }
+    const modal = document.getElementById('directCreditModal');
+    if (!modal) return;
+
+    const nameEl = document.getElementById('directCreditCustName');
+    const idInput = document.getElementById('directCreditCustId');
+    const amtInput = document.getElementById('directCreditAmountInput');
+    const dateInput = document.getElementById('directCreditDateInput');
+    const refInput = document.getElementById('directCreditRefInput');
+    const notesInput = document.getElementById('directCreditNotesInput');
+
+    if (cust) {
+      if (nameEl) nameEl.textContent = `${cust.name} ${cust.phone ? '(' + cust.phone + ')' : ''}`;
+      if (idInput) idInput.value = cust.id;
+    } else {
+      if (nameEl) nameEl.textContent = 'Please select customer';
+      if (idInput) idInput.value = '';
+    }
+
+    if (amtInput) amtInput.value = '';
+    if (dateInput) dateInput.value = new Date().toISOString().slice(0, 10);
+    if (refInput) refInput.value = 'CR-' + Date.now().toString().slice(-5);
+    if (notesInput) notesInput.value = 'දෛනික පොතේ ණය (Daily Book Credit)';
+
+    modal.classList.remove('hidden');
+    if (amtInput) amtInput.focus();
+  },
+
+  async saveDirectCredit(e) {
+    if (e) e.preventDefault();
+    const idVal = document.getElementById('directCreditCustId')?.value;
+    const custId = parseInt(idVal);
+    if (!custId || isNaN(custId)) {
+      alert('කරුණාකර පාරිභෝගිකයෙකු තෝරන්න (Please select a customer).');
+      return;
+    }
+
+    const cust = await db.customers.get(custId);
+    if (!cust) {
+      alert('Customer not found in database.');
+      return;
+    }
+
+    const amount = parseFloat(document.getElementById('directCreditAmountInput')?.value) || 0;
+    if (amount <= 0) {
+      alert('කරුණාකර වලංගු ණය මුදලක් ඇතුළත් කරන්න (Please enter a valid credit amount > 0).');
+      return;
+    }
+
+    const date = document.getElementById('directCreditDateInput')?.value || new Date().toISOString().slice(0, 10);
+    const refNo = document.getElementById('directCreditRefInput')?.value.trim() || ('CR-' + Date.now().toString().slice(-6));
+    const notes = document.getElementById('directCreditNotesInput')?.value.trim() || 'Direct Day Credit Entry';
+    const currentUser = (window.AuthManager && AuthManager.currentUser) ? AuthManager.currentUser.username : 'Staff';
+
+    // 1. Record in manualCredits collection
+    const creditRecord = {
+      customerId: cust.id,
+      customerName: cust.name,
+      amount: Math.round(amount * 100) / 100,
+      date: date,
+      time: new Date().toTimeString().slice(0, 5),
+      refNo: refNo,
+      notes: notes,
+      recordedBy: currentUser,
+      type: 'manual_credit',
+      timestamp: new Date().toISOString()
+    };
+
+    if (db.manualCredits) {
+      await db.manualCredits.add(creditRecord);
+    }
+
+    // 2. Update Customer Balance
+    const currentBal = Number(cust.creditBalance || 0);
+    const newBal = Math.round((currentBal + amount) * 100) / 100;
+    await db.customers.update(cust.id, {
+      creditBalance: newBal,
+      totalSpent: Math.round(((cust.totalSpent || 0) + amount) * 100) / 100
+    });
+
+    document.getElementById('directCreditModal')?.classList.add('hidden');
+    await this.renderCreditTab();
+    await this.renderCustomerTable();
+    if (window.SchoolCreditManager) SchoolCreditManager.init();
+    if (window.SoundManager) SoundManager.playSuccessChime();
+
+    alert(`රු. ${formatLKR(amount)} ක ණය මුදල ${cust.name} ගිණුමට සාර්ථකව එකතු කරන ලදී!\nනව ණය ශේෂය: ${formatLKR(newBal)}`);
+  },
+
+  // Open Full Customer Ledger / Statement
+  async openCustomerStatementModal(id) {
+    const cust = await db.customers.get(id);
+    if (!cust) return;
+
+    const modal = document.getElementById('customerStatementModal');
+    if (!modal) return;
+
+    this.selectedCustomerIdForStatement = cust.id;
+    document.getElementById('stmtCustName').textContent = cust.name;
+    document.getElementById('stmtCustPhone').textContent = cust.phone || 'No Phone';
+    document.getElementById('stmtCustDue').textContent = formatLKR(cust.creditBalance || 0);
+
+    const tbody = document.getElementById('customerStatementTableBody');
+    if (tbody) {
+      tbody.innerHTML = `<tr><td colspan="6" class="text-center py-4 text-slate-400">Loading ledger records...</td></tr>`;
+
+      // 1. POS Credit Sales
+      const allSales = await db.sales.where('customerId').equals(cust.id).toArray();
+      // 2. Direct Manual Credits
+      const manualCredits = db.manualCredits ? await db.manualCredits.where('customerId').equals(cust.id).toArray() : [];
+      // 3. Settlement Payments
+      const payments = db.creditPayments ? await db.creditPayments.where('customerId').equals(cust.id).toArray() : [];
+
+      const ledger = [];
+      if (Number(cust.openingBalance || 0) > 0) {
+        ledger.push({
+          date: cust.createdAt ? cust.createdAt.slice(0, 10) : 'Opening',
+          ref: 'START',
+          notes: 'Opening Credit Balance (ආරම්භක ණය)',
+          debit: Number(cust.openingBalance),
+          credit: 0
+        });
+      }
+
+      allSales.forEach(s => {
+        if (s.paymentMethod === 'credit' || Number(s.creditAmount) > 0) {
+          ledger.push({
+            date: s.timestamp ? s.timestamp.slice(0, 10) : s.date,
+            ref: s.invoiceNo,
+            notes: `Store Invoice (${s.items?.length || 0} items)`,
+            debit: Number(s.creditAmount || s.grandTotal || 0),
+            credit: 0
+          });
+        }
+      });
+
+      manualCredits.forEach(m => {
+        ledger.push({
+          date: m.date,
+          ref: m.refNo || 'CREDIT',
+          notes: m.notes || 'Direct Day Credit (දෛනික ණය)',
+          debit: Number(m.amount || 0),
+          credit: 0
+        });
+      });
+
+      payments.forEach(p => {
+        ledger.push({
+          date: p.date ? p.date.slice(0, 10) : '---',
+          ref: p.receiptNo || 'REC',
+          notes: `${p.paymentMethod || 'Cash'} Settlement (ණය ගෙවීම)`,
+          debit: 0,
+          credit: Number(p.amount || 0)
+        });
+      });
+
+      ledger.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+      let runningBal = 0;
+      tbody.innerHTML = ledger.map(entry => {
+        runningBal += (entry.debit - entry.credit);
+        return `
+          <tr class="border-b border-slate-800 text-xs font-mono">
+            <td class="p-2.5 text-slate-400">${entry.date}</td>
+            <td class="p-2.5 text-sky-400 font-bold">${entry.ref}</td>
+            <td class="p-2.5 text-slate-300 font-sans">${entry.notes}</td>
+            <td class="p-2.5 text-right ${entry.debit > 0 ? 'text-amber-400 font-bold' : 'text-slate-600'}">
+              ${entry.debit > 0 ? formatLKR(entry.debit) : '-'}
+            </td>
+            <td class="p-2.5 text-right ${entry.credit > 0 ? 'text-emerald-400 font-bold' : 'text-slate-600'}">
+              ${entry.credit > 0 ? formatLKR(entry.credit) : '-'}
+            </td>
+            <td class="p-2.5 text-right font-bold text-slate-100">
+              ${formatLKR(runningBal)}
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    modal.classList.remove('hidden');
+  },
+
+  // Print Customer Statement in A4 PDF format
+  async printCustomerStatementA4(id) {
+    const custId = id || this.selectedCustomerIdForStatement;
+    const cust = await db.customers.get(custId);
+    if (!cust) return;
+
+    const storeName = (await getSetting('store_name', '')) || 'LANKA MEGA SUPERMARKET';
+    const storeAddress = (await getSetting('store_address', '')) || 'Main Street, Sri Lanka';
+    const storePhone = (await getSetting('store_phone', '')) || '011-2345678';
+
+    const allSales = await db.sales.where('customerId').equals(cust.id).toArray();
+    const manualCredits = db.manualCredits ? await db.manualCredits.where('customerId').equals(cust.id).toArray() : [];
+    const payments = db.creditPayments ? await db.creditPayments.where('customerId').equals(cust.id).toArray() : [];
+
+    const ledger = [];
+    if (Number(cust.openingBalance || 0) > 0) {
+      ledger.push({ date: cust.createdAt?.slice(0, 10) || 'Opening', ref: 'START', desc: 'Opening Balance', debit: Number(cust.openingBalance), credit: 0 });
+    }
+    allSales.forEach(s => {
+      if (s.paymentMethod === 'credit' || Number(s.creditAmount) > 0) {
+        ledger.push({ date: s.timestamp?.slice(0, 10) || s.date, ref: s.invoiceNo, desc: 'Store POS Invoice', debit: Number(s.creditAmount || s.grandTotal || 0), credit: 0 });
+      }
+    });
+    manualCredits.forEach(m => {
+      ledger.push({ date: m.date, ref: m.refNo || 'CREDIT', desc: m.notes || 'Direct Day Credit', debit: Number(m.amount || 0), credit: 0 });
+    });
+    payments.forEach(p => {
+      ledger.push({ date: p.date?.slice(0, 10) || '---', ref: p.receiptNo || 'REC', desc: 'Settlement Payment', debit: 0, credit: Number(p.amount || 0) });
+    });
+
+    ledger.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+    let runningBal = 0;
+    const rowsHtml = ledger.map(l => {
+      runningBal += (l.debit - l.credit);
+      return `
+        <tr>
+          <td>${l.date}</td>
+          <td style="font-family:monospace;font-weight:bold;">${l.ref}</td>
+          <td>${l.desc}</td>
+          <td style="text-align:right;font-family:monospace;">${l.debit > 0 ? formatLKR(l.debit) : '-'}</td>
+          <td style="text-align:right;font-family:monospace;color:#16a34a;">${l.credit > 0 ? formatLKR(l.credit) : '-'}</td>
+          <td style="text-align:right;font-family:monospace;font-weight:bold;">${formatLKR(runningBal)}</td>
+        </tr>
+      `;
+    }).join('');
+
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>Customer Credit Statement - ${cust.name}</title>
+        <style>
+          @page { size: A4 portrait; margin: 12mm; }
+          body { font-family: 'Inter', Arial, sans-serif; font-size: 11px; color: #0f172a; margin: 0; padding: 15px; }
+          .header { display: flex; justify-content: space-between; border-bottom: 2px solid #0284c7; padding-bottom: 10px; margin-bottom: 12px; }
+          .title { font-size: 18px; font-weight: 800; color: #0284c7; }
+          .cust-info { background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; margin-bottom: 15px; display: grid; grid-template-columns: 2fr 1fr; }
+          table { width: 100%; border-collapse: collapse; margin-bottom: 15px; }
+          th { background: #0f172a; color: #ffffff; text-align: left; padding: 6px 8px; font-size: 10px; }
+          td { border-bottom: 1px solid #e2e8f0; padding: 6px 8px; }
+          .footer { display: flex; justify-content: space-between; margin-top: 35px; border-top: 1px solid #cbd5e1; padding-top: 10px; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <div>
+            <div class="title">${storeName}</div>
+            <div>${storeAddress} &bull; Tel: ${storePhone}</div>
+            <div style="font-weight: bold; margin-top: 4px; color: #475569;">CUSTOMER CREDIT ACCOUNT STATEMENT (පාරිභෝගික ණය ප්‍රකාශනය)</div>
+          </div>
+          <div style="text-align: right; font-size: 10px;">
+            <div>Generated: <strong>${new Date().toLocaleString()}</strong></div>
+            <div>Account Status: <strong style="color: #dc2626;">ACTIVE</strong></div>
+          </div>
+        </div>
+
+        <div class="cust-info">
+          <div>
+            <div style="font-size: 14px; font-weight: bold; color: #0f172a;">👤 ${cust.name}</div>
+            <div>Phone: <strong>${cust.phone || '---'}</strong></div>
+            <div>Address: ${cust.address || '---'}</div>
+          </div>
+          <div style="text-align: right;">
+            <div style="font-size: 10px; color: #64748b;">TOTAL OUTSTANDING BALANCE:</div>
+            <div style="font-size: 18px; font-weight: 900; color: #dc2626; font-family: monospace;">${formatLKR(cust.creditBalance || 0)}</div>
+          </div>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Ref No</th>
+              <th>Description</th>
+              <th style="text-align: right;">Charges (Debit)</th>
+              <th style="text-align: right;">Payments (Credit)</th>
+              <th style="text-align: right;">Balance</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rowsHtml}
+          </tbody>
+        </table>
+
+        <div class="footer">
+          <div>Customer Signature: _______________________</div>
+          <div>Authorized Supermarket Sign: _______________________</div>
+        </div>
+
+        <script>
+          window.onload = function() {
+            setTimeout(function() { window.focus(); window.print(); }, 200);
+          };
+        </script>
+      </body>
+      </html>
+    `;
+
+    const printWin = window.open('', '_blank', 'width=900,height=800');
+    if (printWin) {
+      printWin.document.write(html);
+      printWin.document.close();
+    }
   }
 };
 
@@ -8094,6 +8729,11 @@ const FarmerManager = {
   farmerSearchQuery: '',
   historySearchQuery: '',
   historyFilterStatus: 'all',
+  historyViewMode: 'slips', // 'slips' | 'vegetables'
+  vegSearchQuery: '',
+  vegFilterFarmerId: 'all',
+  vegFilterFromDate: '',
+  vegFilterToDate: '',
   cachedProducts: [],
   currentSearchResults: [],
   activeSearchHighlightedIndex: -1,
@@ -8939,11 +9579,7 @@ const FarmerManager = {
           <td class="p-3 font-semibold text-slate-100 flex items-center gap-2">
             <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
             <div>
-              <div>${item.name}</div>
-              <div class="flex gap-2 mt-0.5">
-                ${item.retailPrice ? `<span class="text-sky-400 font-mono text-[10px]">🏷️ Rs.${item.retailPrice.toFixed(2)}</span>` : ''}
-                ${item.wholesalePrice ? `<span class="text-violet-400 font-mono text-[10px]">🏪 Rs.${item.wholesalePrice.toFixed(2)}</span>` : ''}
-              </div>
+              <div class="font-bold text-slate-100">${item.name}</div>
             </div>
           </td>
           <td class="p-3 font-mono font-bold text-sky-400 text-center">${item.weightKg.toFixed(2)} kg</td>
@@ -9133,8 +9769,16 @@ const FarmerManager = {
             });
           }
         } else {
-          // Check if product with this exact name exists
-          const existing = await db.products.where('name').equalsIgnoreCase(item.name).first();
+          // Check if product with this exact name or Sinhala name exists
+          const allProds = await db.products.toArray();
+          const cleanItemName = (item.name || '').trim().toLowerCase();
+          const existing = allProds.find(p => {
+            const pName = (p.name || '').trim().toLowerCase();
+            const pNameSi = (p.nameSi || '').trim().toLowerCase();
+            return pName === cleanItemName || pNameSi === cleanItemName ||
+                   (cleanItemName.length > 2 && (pName.includes(cleanItemName) || pNameSi.includes(cleanItemName)));
+          });
+
           if (existing) {
             await db.products.update(existing.id, {
               currentStock: Math.round(((existing.currentStock || 0) + item.weightKg) * 100) / 100,
@@ -9149,12 +9793,12 @@ const FarmerManager = {
               nameSi: item.name,
               category: 'Fresh Produce (එළවළු සහ පලතුරු)',
               costPrice: item.unitPrice,
-              markedPrice: item.retailPrice || Math.round(item.unitPrice * 1.3),
+              markedPrice: 0,
               sellingPrice: autoRetail,
               wholesalePrice: autoWholesale,
               unit: 'kg',
               currentStock: item.weightKg,
-              minStock: 5,
+              minStock: 0,
               barcodes: []
             });
           }
@@ -9265,19 +9909,19 @@ const FarmerManager = {
           </td>
           <td class="p-3 text-right space-x-1.5 whitespace-nowrap">
             ${bal > 0 ? `
-              <button onclick="FarmerManager.openPaymentModal(${f.id})" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition shadow-md shadow-emerald-600/20 inline-flex items-center gap-1 cursor-pointer">
+              <button type="button" onclick="FarmerManager.openPaymentModal(${f.id})" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition shadow-md shadow-emerald-600/20 inline-flex items-center gap-1 cursor-pointer">
                 <span>💵</span> <span>මුදල් ගෙවන්න</span>
               </button>
             ` : `
               <span class="px-2 py-1 bg-slate-800 text-emerald-400 rounded-lg text-[11px] font-bold">ගෙවා නිමයි</span>
             `}
-            <button onclick="FarmerManager.openStatementModal(${f.id})" class="p-1.5 bg-slate-800 hover:bg-sky-600 text-slate-300 hover:text-white rounded-lg transition cursor-pointer" title="ගිණුම් ඉතිහාසය (Statement)">
+            <button type="button" onclick="FarmerManager.openStatementModal(${f.id})" class="p-1.5 bg-slate-800 hover:bg-sky-600 text-slate-300 hover:text-white rounded-lg transition cursor-pointer" title="ගිණුම් ඉතිහාසය (Statement)">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
             </button>
-            <button onclick="FarmerManager.openFarmerModal(${f.id})" class="p-1.5 bg-slate-800 hover:bg-amber-600 text-slate-300 hover:text-white rounded-lg transition cursor-pointer" title="සංස්කරණය (Edit)">
+            <button type="button" onclick="FarmerManager.openFarmerModal(${f.id})" class="p-1.5 bg-slate-800 hover:bg-amber-600 text-slate-300 hover:text-white rounded-lg transition cursor-pointer" title="සංස්කරණය (Edit)">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
             </button>
-            <button onclick="FarmerManager.deleteFarmer(${f.id})" class="p-1.5 bg-slate-800 hover:bg-rose-600 text-slate-300 hover:text-white rounded-lg transition cursor-pointer" title="මකන්න (Delete)">
+            <button type="button" onclick="FarmerManager.deleteFarmer(${f.id})" class="p-1.5 bg-slate-800 hover:bg-rose-600 text-slate-300 hover:text-white rounded-lg transition cursor-pointer" title="මකන්න (Delete)">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
             </button>
           </td>
@@ -9455,16 +10099,27 @@ const FarmerManager = {
         <tr class="border-b border-slate-800/80 hover:bg-slate-800/40 text-xs transition">
           <td class="p-3 font-mono font-bold text-sky-400">${i.slipNo}</td>
           <td class="p-3">
-            <div class="text-slate-200 font-mono text-[11px]">${i.date} &bull; ${i.time || ''}</div>
+            <div class="text-slate-200 font-mono text-[11px] font-bold">${i.date} &bull; ${i.time || ''}</div>
             <div class="text-[10px] text-slate-500">කැෂියර්: @${i.receivedBy || 'staff'}</div>
           </td>
           <td class="p-3">
             <div class="font-bold text-slate-100">${i.farmerName}</div>
             <div class="text-[11px] font-mono text-slate-400">${i.farmerPhone || '-'}</div>
           </td>
-          <td class="p-3 max-w-xs">
-            <div class="truncate text-slate-300 font-medium" title="${itemsSummary}">${itemsSummary}</div>
-            <div class="text-[10px] text-sky-400 font-mono font-bold">${i.totalWeight ? i.totalWeight.toFixed(2) : '-'} kg Total</div>
+          <td class="p-3 min-w-[260px] max-w-sm">
+            <div class="space-y-1">
+              ${(i.items || []).map(it => `
+                <div class="flex items-center justify-between gap-1 text-[11px] bg-slate-950/80 px-2 py-1 rounded border border-slate-800">
+                  <span class="font-bold text-slate-100 truncate max-w-[110px]" title="${it.name}">🥕 ${it.name}</span>
+                  <span class="text-amber-300 font-mono font-bold whitespace-nowrap bg-amber-950/40 px-1 rounded">${it.weightKg || 0}kg &times; Rs. ${Number(it.unitPrice || 0).toFixed(2)}</span>
+                  <span class="font-bold text-emerald-400 font-mono whitespace-nowrap">= Rs. ${Number(it.lineTotal || ((it.weightKg || 0) * (it.unitPrice || 0))).toFixed(2)}</span>
+                </div>
+              `).join('')}
+            </div>
+            <div class="mt-1 flex items-center justify-between text-[10px] text-sky-400 font-mono font-bold px-1">
+              <span>එකතුව (Total Weight):</span>
+              <span>${i.totalWeight ? Number(i.totalWeight).toFixed(2) : '-'} kg</span>
+            </div>
           </td>
           <td class="p-3 text-right font-mono font-bold text-slate-100">${formatLKR(i.grandTotal)}</td>
           <td class="p-3 text-right font-mono font-bold ${Number(i.balanceAmount) > 0 ? 'text-amber-400' : 'text-slate-500'}">
@@ -9472,18 +10127,218 @@ const FarmerManager = {
           </td>
           <td class="p-3 text-center">${statusBadge}</td>
           <td class="p-3 text-right space-x-1 whitespace-nowrap">
+            <button type="button" onclick="FarmerManager.viewIntakeSlipDetails('${i.id}')" class="p-1.5 bg-sky-950/80 hover:bg-sky-900 border border-sky-800 text-sky-300 rounded-lg transition cursor-pointer" title="සම්පූර්ණ විස්තරය බැලීම (View Details)">
+              👁️
+            </button>
             ${Number(i.balanceAmount) > 0 ? `
-              <button onclick="FarmerManager.openPaymentModal(${i.farmerId}, '${i.id}')" class="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition" title="මුදල් ගෙවන්න">
+              <button type="button" onclick="FarmerManager.openPaymentModal(${i.farmerId}, '${i.id}')" class="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition cursor-pointer" title="මුදල් ගෙවන්න">
                 ගෙවීම
               </button>
             ` : ''}
-            <button onclick="FarmerManager.printIntakeSlipById('${i.id}')" class="p-1.5 bg-slate-800 hover:bg-sky-600 text-slate-300 hover:text-white rounded-lg transition" title="රිසිට්පත මුද්‍රණය (Print Slip)">
+            <button type="button" onclick="FarmerManager.openFarmerReturnModal(${i.farmerId}, '${i.id}')" class="px-2 py-1 bg-amber-950/80 hover:bg-amber-900 border border-amber-700 text-amber-300 rounded-lg text-xs font-bold transition cursor-pointer" title="එළවළු ආපසු බාරදීම (Return vegetables)">
+              🔄 ආපසු
+            </button>
+            <button type="button" onclick="FarmerManager.printIntakeSlipById('${i.id}')" class="p-1.5 bg-slate-800 hover:bg-sky-600 text-slate-300 hover:text-white rounded-lg transition cursor-pointer" title="රිසිට්පත මුද්‍රණය (Print Slip)">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
+            </button>
+            <button type="button" onclick="FarmerManager.deleteIntakeSlip('${i.id}')" class="p-1.5 bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 rounded-lg transition cursor-pointer" title="මකා දැමීම (Delete Slip)">
+              🗑️
             </button>
           </td>
         </tr>
       `;
     }).join('');
+  },
+
+  // View full intake slip details modal
+  async viewIntakeSlipDetails(id) {
+    const intake = await db.farmerIntakes.get(id);
+    if (!intake) {
+      alert('Intake slip not found.');
+      return;
+    }
+
+    const modal = document.getElementById('farmerIntakeDetailModal');
+    if (!modal) return;
+
+    document.getElementById('intakeDetailSlipNo').textContent = intake.slipNo || '---';
+    document.getElementById('intakeDetailDate').textContent = `${intake.date} ${intake.time || ''}`;
+    document.getElementById('intakeDetailFarmer').textContent = `${intake.farmerName} (${intake.farmerPhone || '-'})`;
+    document.getElementById('intakeDetailStaff').textContent = `@${intake.receivedBy || 'Staff'}`;
+    document.getElementById('intakeDetailGrandTotal').textContent = formatLKR(intake.grandTotal || 0);
+    document.getElementById('intakeDetailPaid').textContent = formatLKR(intake.paidAmount || 0);
+    document.getElementById('intakeDetailBalance').textContent = formatLKR(intake.balanceAmount || 0);
+    document.getElementById('intakeDetailPrintBtn').onclick = () => this.printIntakeSlipById(intake.id);
+
+    const tbody = document.getElementById('intakeDetailItemsTableBody');
+    if (tbody) {
+      tbody.innerHTML = (intake.items || []).map((it, idx) => `
+        <tr class="border-b border-slate-800 text-xs">
+          <td class="p-2.5 text-slate-400 font-mono">${idx + 1}</td>
+          <td class="p-2.5 font-bold text-slate-100">${it.name}</td>
+          <td class="p-2.5 text-right font-mono text-sky-400 font-bold">${it.weightKg} kg</td>
+          <td class="p-2.5 text-right font-mono text-amber-300 font-bold">Rs. ${Number(it.unitPrice).toFixed(2)}</td>
+          <td class="p-2.5 text-right font-mono text-emerald-400 font-black">Rs. ${Number(it.lineTotal || (it.weightKg * it.unitPrice)).toFixed(2)}</td>
+          <td class="p-2.5 text-right font-mono text-slate-400">${it.retailPrice ? 'Rs. ' + Number(it.retailPrice).toFixed(2) : '-'}</td>
+        </tr>
+      `).join('');
+    }
+
+    modal.classList.remove('hidden');
+  },
+
+  // Toggle between Slips view and Vegetable Ledger view
+  switchHistoryView(mode) {
+    this.historyViewMode = mode;
+    const slipsView = document.getElementById('farmerHistorySlipsView');
+    const vegView = document.getElementById('farmerHistoryVegView');
+    const btnSlips = document.getElementById('farmerHistTab_slips');
+    const btnVeg = document.getElementById('farmerHistTab_veg');
+
+    if (mode === 'slips') {
+      if (slipsView) slipsView.classList.remove('hidden');
+      if (vegView) vegView.classList.add('hidden');
+      if (btnSlips) {
+        btnSlips.className = 'px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 bg-sky-600 text-white shadow-md shadow-sky-600/30';
+      }
+      if (btnVeg) {
+        btnVeg.className = 'px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 text-slate-400 hover:text-white hover:bg-slate-800';
+      }
+      this.renderHistoryTable();
+    } else {
+      if (slipsView) slipsView.classList.add('hidden');
+      if (vegView) vegView.classList.remove('hidden');
+      if (btnSlips) {
+        btnSlips.className = 'px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 text-slate-400 hover:text-white hover:bg-slate-800';
+      }
+      if (btnVeg) {
+        btnVeg.className = 'px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 bg-sky-600 text-white shadow-md shadow-sky-600/30';
+      }
+      this.populateVegHistoryFarmersFilter();
+      this.renderVegetablesLedgerTable();
+    }
+  },
+
+  async populateVegHistoryFarmersFilter() {
+    const sel = document.getElementById('vegHistoryFarmerFilter');
+    if (!sel || sel.children.length > 1) return;
+    const farmers = await db.farmers.toArray();
+    farmers.forEach(f => {
+      const opt = document.createElement('option');
+      opt.value = f.id;
+      opt.textContent = `${f.name} (${f.phone || ''})`;
+      sel.appendChild(opt);
+    });
+  },
+
+  // Vegetable-by-Vegetable History Ledger (ගොවීන්ගෙන් ගෙනාපු එළවළු වර්ග, ගත් මිල, බර සහ දිනය ඉතිහාසය)
+  async renderVegetablesLedgerTable() {
+    const tbody = document.getElementById('farmerVegLedgerTableBody');
+    if (!tbody) return;
+
+    let intakes = await db.farmerIntakes.reverse().toArray();
+
+    // Flatten all items across intakes with parent metadata
+    let rows = [];
+    intakes.forEach(i => {
+      (i.items || []).forEach(it => {
+        rows.push({
+          intakeId: i.id,
+          slipNo: i.slipNo,
+          date: i.date,
+          time: i.time,
+          farmerId: i.farmerId,
+          farmerName: i.farmerName,
+          farmerPhone: i.farmerPhone,
+          receivedBy: i.receivedBy,
+          name: it.name,
+          weightKg: Number(it.weightKg || it.weight || 0),
+          unitPrice: Number(it.unitPrice || 0),
+          lineTotal: Number(it.lineTotal || ((it.weightKg || 0) * (it.unitPrice || 0))),
+          retailPrice: it.retailPrice ? Number(it.retailPrice) : null,
+          wholesalePrice: it.wholesalePrice ? Number(it.wholesalePrice) : null
+        });
+      });
+    });
+
+    // Filter by search query (e.g. vegetable name)
+    const vegQuery = (this.vegSearchQuery || '').toLowerCase().trim();
+    if (vegQuery) {
+      rows = rows.filter(r =>
+        (r.name && r.name.toLowerCase().includes(vegQuery)) ||
+        (r.farmerName && r.farmerName.toLowerCase().includes(vegQuery)) ||
+        (r.slipNo && r.slipNo.toLowerCase().includes(vegQuery))
+      );
+    }
+
+    // Filter by Farmer
+    if (this.vegFilterFarmerId && this.vegFilterFarmerId !== 'all') {
+      rows = rows.filter(r => String(r.farmerId) === String(this.vegFilterFarmerId));
+    }
+
+    // Filter by From Date
+    if (this.vegFilterFromDate) {
+      rows = rows.filter(r => r.date >= this.vegFilterFromDate);
+    }
+    // Filter by To Date
+    if (this.vegFilterToDate) {
+      rows = rows.filter(r => r.date <= this.vegFilterToDate);
+    }
+
+    // Update KPI stats
+    const totalWeight = rows.reduce((s, r) => s + r.weightKg, 0);
+    const totalCost = rows.reduce((s, r) => s + r.lineTotal, 0);
+    const avgPrice = totalWeight > 0 ? (totalCost / totalWeight) : 0;
+
+    const elWeight = document.getElementById('vegLedgerTotalWeight');
+    const elCost = document.getElementById('vegLedgerTotalCost');
+    const elAvg = document.getElementById('vegLedgerAvgPrice');
+    const elCount = document.getElementById('vegLedgerRowCount');
+
+    if (elWeight) elWeight.textContent = `${totalWeight.toFixed(2)} kg`;
+    if (elCost) elCost.textContent = formatLKR(totalCost);
+    if (elAvg) elAvg.textContent = `Rs. ${avgPrice.toFixed(2)} / kg`;
+    if (elCount) elCount.textContent = `${rows.length} records`;
+
+    if (rows.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="8" class="text-center py-8 text-slate-500 text-xs">එළවළු දත්ත කිසිවක් හමු නොවීය (No vegetable records found).</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = rows.map(r => `
+      <tr class="border-b border-slate-800/80 hover:bg-slate-800/40 text-xs transition">
+        <td class="p-3 font-mono text-slate-300">
+          <div class="font-bold">${r.date}</div>
+          <div class="text-[10px] text-slate-500">${r.time || ''}</div>
+        </td>
+        <td class="p-3">
+          <div class="font-bold text-slate-100">${r.farmerName}</div>
+          <div class="text-[10px] text-slate-400 font-mono">${r.farmerPhone || '-'}</div>
+        </td>
+        <td class="p-3">
+          <div class="font-extrabold text-amber-300 text-sm flex items-center gap-1.5">
+            <span>🥕</span> <span>${r.name}</span>
+          </div>
+        </td>
+        <td class="p-3 text-right font-mono font-bold text-sky-400 text-sm">
+          ${r.weightKg.toFixed(2)} kg
+        </td>
+        <td class="p-3 text-right font-mono font-black text-amber-400 text-sm bg-amber-950/20">
+          Rs. ${r.unitPrice.toFixed(2)}
+        </td>
+        <td class="p-3 text-right font-mono font-black text-emerald-400 text-sm">
+          ${formatLKR(r.lineTotal)}
+        </td>
+        <td class="p-3 font-mono text-sky-400 text-[11px] font-bold">
+          ${r.slipNo}
+        </td>
+        <td class="p-3 text-right">
+          <button type="button" onclick="FarmerManager.viewIntakeSlipDetails('${r.intakeId}')" class="px-2 py-1 bg-slate-800 hover:bg-sky-600 text-slate-200 hover:text-white rounded-lg text-xs font-bold transition cursor-pointer">
+            👁️ ස්ලිප් එක
+          </button>
+        </td>
+      </tr>
+    `).join('');
   },
 
   // =========================================================
@@ -9514,7 +10369,7 @@ const FarmerManager = {
         <td class="p-3 text-slate-400 text-[11px]">${p.notes || (p.intakeSlipNo ? `Slip: ${p.intakeSlipNo}` : '-')}</td>
         <td class="p-3 text-right space-x-1 whitespace-nowrap">
           <span class="text-[10px] text-slate-500 font-mono mr-2">@${p.paidBy || 'staff'}</span>
-          <button onclick="FarmerManager.printPaymentVoucherById('${p.id}')" class="p-1.5 bg-slate-800 hover:bg-emerald-600 text-slate-300 hover:text-white rounded-lg transition" title="වවුචරය මුද්‍රණය (Print Voucher)">
+          <button type="button" onclick="FarmerManager.printPaymentVoucherById('${p.id}')" class="p-1.5 bg-slate-800 hover:bg-emerald-600 text-slate-300 hover:text-white rounded-lg transition cursor-pointer" title="වවුචරය මුද්‍රණය (Print Voucher)">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
           </button>
         </td>
@@ -9560,8 +10415,19 @@ const FarmerManager = {
     setTimeout(() => { if (amountInput) amountInput.focus(); }, 50);
   },
 
+  processPaymentSettlement(event) {
+    if (event) {
+      if (typeof event.preventDefault === 'function') event.preventDefault();
+      if (typeof event.stopPropagation === 'function') event.stopPropagation();
+    }
+    return this.processFarmerPayment(event);
+  },
+
   async processFarmerPayment(event) {
-    if (event) event.preventDefault();
+    if (event) {
+      if (typeof event.preventDefault === 'function') event.preventDefault();
+      if (typeof event.stopPropagation === 'function') event.stopPropagation();
+    }
 
     const farmerId = parseInt(document.getElementById('settleFarmerId')?.value);
     const specificIntakeId = document.getElementById('settleSpecificIntakeId')?.value;
@@ -9569,13 +10435,21 @@ const FarmerManager = {
     const paymentDate = document.getElementById('settlePaymentDate')?.value || new Date().toISOString().slice(0, 10);
     const notes = document.getElementById('settleNotesInput')?.value.trim() || '';
 
+    if (isNaN(farmerId)) {
+      alert('කරුණාකර වලංගු ගොවියෙකු තෝරන්න.');
+      return false;
+    }
+
     if (amount <= 0) {
       alert('කරුණාකර වලංගු මුදලක් ඇතුළත් කරන්න (Please enter valid payment amount).');
-      return;
+      return false;
     }
 
     const farmer = await db.farmers.get(farmerId);
-    if (!farmer) return;
+    if (!farmer) {
+      alert('ගොවි ගිණුම හමු නොවීය.');
+      return false;
+    }
 
     const currentUser = (window.AuthManager && AuthManager.currentUser) ? AuthManager.currentUser.username : 'cashier';
     const paymentNo = `FPAY-${Date.now().toString().slice(-6)}`;
@@ -9731,12 +10605,18 @@ const FarmerManager = {
   // PRINTING: THERMAL SLIPS & PAYMENT VOUCHERS
   // =========================================================
   async printIntakeSlipById(id) {
-    const intake = await db.farmerIntakes.get(id);
+    let intake = await db.farmerIntakes.get(id);
+    if (!intake && !isNaN(Number(id))) {
+      intake = await db.farmerIntakes.get(Number(id));
+    }
     if (intake) this.printIntakeSlip(intake);
   },
 
   async printPaymentVoucherById(id) {
-    const payment = await db.farmerPayments.get(id);
+    let payment = await db.farmerPayments.get(id);
+    if (!payment && !isNaN(Number(id))) {
+      payment = await db.farmerPayments.get(Number(id));
+    }
     if (!payment) return;
     const farmer = await db.farmers.get(payment.farmerId);
     payment.remainingBalance = farmer ? farmer.outstandingBalance : 0;
@@ -9744,49 +10624,48 @@ const FarmerManager = {
   },
 
   async printIntakeSlip(intake) {
-    const settings = {
-      storeName: (await getSetting('store_name', 'SUPERMARKET')).value || 'SUPERMARKET',
-      storeNameSi: (await getSetting('store_name_si', '')).value || '',
-      phone: (await getSetting('store_phone', '')).value || '',
-      address: (await getSetting('store_address', '')).value || '',
-      thermalWidth: (await getSetting('thermal_width', '80mm')).value || '80mm'
-    };
+    if (!intake) return;
+    const storeName = await getSetting('store_name', 'SUPERMARKET');
+    const storeNameSi = await getSetting('store_name_si', '');
+    const phone = await getSetting('store_phone', '');
+    const address = await getSetting('store_address', '');
+    const thermalWidth = await getSetting('thermal_width', '80mm');
 
     const itemsHtml = (intake.items || []).map(i => `
-      <tr>
-        <td style="padding: 2px 0; text-align: left;">${i.name}</td>
-        <td style="padding: 2px 0; text-align: center;">${i.weightKg.toFixed(2)}kg</td>
-        <td style="padding: 2px 0; text-align: right;">${formatLKR(i.unitPrice)}</td>
-        <td style="padding: 2px 0; text-align: right; font-weight: bold;">${formatLKR(i.lineTotal)}</td>
+      <tr style="border-bottom: 1px dashed #ccc;">
+        <td style="padding: 3px 0; text-align: left; font-weight: 600;">${i.name}</td>
+        <td style="padding: 3px 0; text-align: center; font-weight: 700;">${Number(i.weightKg || 0).toFixed(2)}kg</td>
+        <td style="padding: 3px 0; text-align: right;">${formatLKR(i.unitPrice)}</td>
+        <td style="padding: 3px 0; text-align: right; font-weight: bold;">${formatLKR(i.lineTotal)}</td>
       </tr>
     `).join('');
 
     const html = `
-      <div style="text-align: center; font-family: monospace; font-size: 11px; line-height: 1.35; color: #000; padding: 4px;">
-        <h2 style="font-size: 14px; margin: 0; font-weight: 900;">${settings.storeName}</h2>
-        ${settings.storeNameSi ? `<div style="font-size: 11px;">${settings.storeNameSi}</div>` : ''}
-        ${settings.address ? `<div style="font-size: 10px;">${settings.address}</div>` : ''}
-        ${settings.phone ? `<div style="font-size: 10px;">Tel: ${settings.phone}</div>` : ''}
+      <div style="text-align: center; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans Sinhala', 'Iskoola Pota', Arial, sans-serif; font-size: 11px; line-height: 1.35; color: #000; padding: 4px;">
+        <h2 style="font-size: 15px; margin: 0; font-weight: 900; text-transform: uppercase;">${storeName}</h2>
+        ${storeNameSi ? `<div style="font-size: 11px; font-weight: 700;">${storeNameSi}</div>` : ''}
+        ${address ? `<div style="font-size: 10px;">${address}</div>` : ''}
+        ${phone ? `<div style="font-size: 10px; font-weight: bold;">Tel: ${phone}</div>` : ''}
         
-        <div style="border-top: 1px dashed #000; border-bottom: 1px dashed #000; margin: 6px 0; padding: 4px 0; font-weight: bold;">
+        <div style="border-top: 1.5px dashed #000; border-bottom: 1.5px dashed #000; margin: 6px 0; padding: 4px 0; font-weight: 900; font-size: 12px;">
           FARMER PRODUCE INTAKE SLIP<br>
-          <span style="font-size: 9.5px;">(එළවළු බාරගැනීමේ රිසිට්පත)</span>
+          <span style="font-size: 10px; font-weight: bold;">(එළවළු බාරගැනීමේ රිසිට්පත)</span>
         </div>
 
-        <div style="text-align: left; font-size: 10px; margin-bottom: 6px;">
-          <div>Slip No: <strong>${intake.slipNo}</strong></div>
-          <div>Date/Time: ${intake.date} ${intake.time || ''}</div>
-          <div>Farmer: <strong>${intake.farmerName}</strong> (${intake.farmerPhone || '-'})</div>
+        <div style="text-align: left; font-size: 10.5px; margin-bottom: 6px; line-height: 1.4;">
+          <div>Slip No: <strong style="font-size: 11px;">${intake.slipNo}</strong></div>
+          <div>Date/Time: <strong>${intake.date} ${intake.time || ''}</strong></div>
+          <div>Farmer: <strong>${intake.farmerName}</strong> ${intake.farmerPhone ? `(${intake.farmerPhone})` : ''}</div>
           <div>Received By: @${intake.receivedBy || 'staff'}</div>
         </div>
 
-        <table style="width: 100%; border-collapse: collapse; font-size: 10px; margin-bottom: 6px;">
+        <table style="width: 100%; border-collapse: collapse; font-size: 10.5px; margin-bottom: 6px;">
           <thead>
-            <tr style="border-bottom: 1px solid #000;">
-              <th style="text-align: left;">Item</th>
-              <th style="text-align: center;">KG</th>
-              <th style="text-align: right;">Rate</th>
-              <th style="text-align: right;">Total</th>
+            <tr style="border-bottom: 1.5px solid #000;">
+              <th style="text-align: left; padding: 2px 0;">Item</th>
+              <th style="text-align: center; padding: 2px 0;">KG</th>
+              <th style="text-align: right; padding: 2px 0;">Rate</th>
+              <th style="text-align: right; padding: 2px 0;">Total</th>
             </tr>
           </thead>
           <tbody>
@@ -9794,18 +10673,18 @@ const FarmerManager = {
           </tbody>
         </table>
 
-        <div style="border-top: 1px solid #000; padding-top: 4px; font-size: 11px;">
-          <div style="display: flex; justify-content: space-between;">
+        <div style="border-top: 1.5px solid #000; padding-top: 4px; font-size: 11px;">
+          <div style="display: flex; justify-content: space-between; padding: 1px 0;">
             <span>Total Weight:</span>
-            <strong>${intake.totalWeight ? intake.totalWeight.toFixed(2) : '-'} kg</strong>
+            <strong>${intake.totalWeight ? Number(intake.totalWeight).toFixed(2) : '-'} kg</strong>
           </div>
-          <div style="display: flex; justify-content: space-between; font-size: 12px; font-weight: 900; margin: 2px 0;">
-            <span>Grand Total:</span>
+          <div style="display: flex; justify-content: space-between; font-size: 13px; font-weight: 900; margin: 3px 0; border-top: 1.5px solid #000; border-bottom: 1.5px solid #000; padding: 3px 0;">
+            <span>GRAND TOTAL:</span>
             <span>${formatLKR(intake.grandTotal)}</span>
           </div>
-          <div style="display: flex; justify-content: space-between;">
+          <div style="display: flex; justify-content: space-between; padding: 1px 0;">
             <span>Paid Cash Now:</span>
-            <span>${formatLKR(intake.paidAmount || 0)}</span>
+            <strong style="color: #000;">${formatLKR(intake.paidAmount || 0)}</strong>
           </div>
           <div style="display: flex; justify-content: space-between; font-size: 12px; font-weight: 900; border-top: 1px dashed #000; margin-top: 3px; padding-top: 3px;">
             <span>Balance Due (ණය):</span>
@@ -9813,47 +10692,47 @@ const FarmerManager = {
           </div>
         </div>
 
-        <div style="margin-top: 15px; border-top: 1px dashed #000; padding-top: 6px; font-size: 9.5px;">
+        <div style="margin-top: 14px; border-top: 1px dashed #000; padding-top: 6px; font-size: 9.5px; text-align: center;">
           <div>Please present this slip when collecting cash payout.</div>
-          <div style="margin-top: 2px;">මුදල් ලබාගැනීමට පැමිණෙන විට කරුණාකර මෙම රිසිට්පත රැගෙන එන්න.</div>
+          <div style="margin-top: 2px; font-weight: bold;">මුදල් ලබාගැනීමට පැමිණෙන විට කරුණාකර මෙම රිසිට්පත රැගෙන එන්න.</div>
+          <div style="margin-top: 6px; font-size: 8.5px; color: #333;">DSK Supermarket POS</div>
         </div>
       </div>
     `;
 
-    this._printContent(html, settings.thermalWidth);
+    this._printContent(html, thermalWidth, `Intake Slip - ${intake.slipNo}`);
   },
 
   async printPaymentVoucher(payment) {
-    const settings = {
-      storeName: (await getSetting('store_name', 'SUPERMARKET')).value || 'SUPERMARKET',
-      phone: (await getSetting('store_phone', '')).value || '',
-      thermalWidth: (await getSetting('thermal_width', '80mm')).value || '80mm'
-    };
+    if (!payment) return;
+    const storeName = await getSetting('store_name', 'SUPERMARKET');
+    const phone = await getSetting('store_phone', '');
+    const thermalWidth = await getSetting('thermal_width', '80mm');
 
     const html = `
-      <div style="text-align: center; font-family: monospace; font-size: 11px; line-height: 1.35; color: #000; padding: 4px;">
-        <h2 style="font-size: 14px; margin: 0; font-weight: 900;">${settings.storeName}</h2>
-        ${settings.phone ? `<div style="font-size: 10px;">Tel: ${settings.phone}</div>` : ''}
+      <div style="text-align: center; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans Sinhala', 'Iskoola Pota', Arial, sans-serif; font-size: 11px; line-height: 1.35; color: #000; padding: 4px;">
+        <h2 style="font-size: 15px; margin: 0; font-weight: 900; text-transform: uppercase;">${storeName}</h2>
+        ${phone ? `<div style="font-size: 10px; font-weight: bold;">Tel: ${phone}</div>` : ''}
 
-        <div style="border-top: 1px dashed #000; border-bottom: 1px dashed #000; margin: 6px 0; padding: 4px 0; font-weight: bold;">
+        <div style="border-top: 1.5px dashed #000; border-bottom: 1.5px dashed #000; margin: 6px 0; padding: 4px 0; font-weight: 900; font-size: 12px;">
           FARMER CASH PAYMENT VOUCHER<br>
-          <span style="font-size: 9.5px;">(ගොවි මුදල් ගෙවීමේ වවුචරය)</span>
+          <span style="font-size: 10px; font-weight: bold;">(ගොවි මුදල් ගෙවීමේ වවුචරය)</span>
         </div>
 
-        <div style="text-align: left; font-size: 10px; margin-bottom: 8px;">
-          <div>Voucher No: <strong>${payment.paymentNo}</strong></div>
-          <div>Date: ${payment.paymentDate}</div>
+        <div style="text-align: left; font-size: 10.5px; margin-bottom: 8px; line-height: 1.4;">
+          <div>Voucher No: <strong style="font-size: 11px;">${payment.paymentNo}</strong></div>
+          <div>Date: <strong>${payment.paymentDate}</strong></div>
           <div>Paid To: <strong>${payment.farmerName}</strong></div>
-          <div>Method: ${(payment.paymentMethod || 'CASH').toUpperCase()}</div>
+          <div>Method: <strong>${(payment.paymentMethod || 'CASH').toUpperCase()}</strong></div>
           <div>Paid By: @${payment.paidBy || 'staff'}</div>
         </div>
 
-        <div style="border: 1px solid #000; padding: 8px; margin-bottom: 8px; font-size: 13px; font-weight: 900;">
+        <div style="border: 2px solid #000; padding: 8px; margin-bottom: 8px; font-size: 14px; font-weight: 900;">
           AMOUNT PAID: ${formatLKR(payment.amount)}
         </div>
 
         ${payment.remainingBalance !== undefined ? `
-          <div style="text-align: right; font-size: 10px; margin-bottom: 10px;">
+          <div style="text-align: right; font-size: 11px; margin-bottom: 10px;">
             Remaining Farmer Balance Due: <strong>${formatLKR(payment.remainingBalance)}</strong>
           </div>
         ` : ''}
@@ -9866,28 +10745,383 @@ const FarmerManager = {
             Farmer Signature
           </div>
         </div>
+
+        <div style="margin-top: 12px; font-size: 8.5px; color: #333; text-align: center;">
+          DSK Supermarket POS
+        </div>
       </div>
     `;
 
-    this._printContent(html, settings.thermalWidth);
+    this._printContent(html, thermalWidth, `Payment Voucher - ${payment.paymentNo}`);
   },
 
-  _printContent(html, thermalWidth = '80mm') {
-    const printArea = document.getElementById('thermalReceiptPrintArea');
-    if (!printArea) return;
+  // =========================================================
+  // DELETE MISTAKEN FARMER INTAKE SLIP
+  // =========================================================
+  async deleteIntakeSlip(intakeId) {
+    let intake = await db.farmerIntakes.get(intakeId);
+    if (!intake && !isNaN(Number(intakeId))) intake = await db.farmerIntakes.get(Number(intakeId));
+    if (!intake) return;
 
-    printArea.innerHTML = html;
-    if (thermalWidth === '58mm') {
-      document.body.classList.add('printer-58mm');
-    } else {
-      document.body.classList.remove('printer-58mm');
+    AuthManager.requireAdminAuth({
+      actionName: 'Delete Farmer Intake Slip',
+      actionDesc: `Permanently delete intake slip ${intake.slipNo} for farmer ${intake.farmerName}`,
+      requiredPerm: 'allowDelete',
+      onAuthorized: async () => {
+        const msg = `⚠️ අවවාදයයි (Warning):\n\nමෙම එළවළු බාරගැනීමේ බිල (${intake.slipNo}) මකා දමනවාද?\n\n- ගොවියාගේ ශේෂයෙන් රු. ${formatLKR(intake.balanceAmount || 0)} අඩු වේ.\n- එළවළු තොගය (Stock) Inventory එකෙන් අඩු වේ.\n\nමෙය ආපසු හැරවිය නොහැක.`;
+        if (!confirm(msg)) return;
+
+        try {
+          // 1. Reverse stock
+          if (intake.items && Array.isArray(intake.items)) {
+            for (const it of intake.items) {
+              const qty = Number(it.weightKg || 0);
+              if (it.productId) {
+                const prod = await db.products.get(it.productId);
+                if (prod) {
+                  const newStk = Math.max(0, Math.round(((prod.currentStock || 0) - qty) * 100) / 100);
+                  await db.products.update(it.productId, { currentStock: newStk });
+                }
+              }
+            }
+          }
+
+          // 2. Reverse farmer balance
+          if (intake.farmerId) {
+            const farmer = await db.farmers.get(intake.farmerId);
+            if (farmer) {
+              const revDue = Number(intake.balanceAmount || 0);
+              const revTotal = Number(intake.grandTotal || 0);
+              const newBal = Math.max(0, Math.round(((farmer.outstandingBalance || 0) - revDue) * 100) / 100);
+              const newSupplied = Math.max(0, Math.round(((farmer.totalSupplied || 0) - revTotal) * 100) / 100);
+              await db.farmers.update(intake.farmerId, {
+                outstandingBalance: newBal,
+                totalSupplied: newSupplied
+              });
+            }
+          }
+
+          // 3. Delete intake
+          await db.farmerIntakes.delete(intake.id || intakeId);
+
+          if (window.SoundManager) SoundManager.playSuccessChime();
+          alert(`බිල (${intake.slipNo}) සාර්ථකව මකා දමන ලදී! (Intake slip deleted and stock/balance reversed)`);
+
+          await this.renderSummaryCards();
+          await this.renderHistoryTable();
+          await this.renderFarmersTable();
+          if (window.InventoryManager) InventoryManager.renderInventoryTable();
+        } catch (err) {
+          console.error('Error deleting farmer intake:', err);
+          alert('Error: ' + err.message);
+        }
+      }
+    });
+  },
+
+  // =========================================================
+  // FARMER RETURN (එළවළු ආපසු බාරදීම - Spoilage / Excess Return)
+  // =========================================================
+  async openFarmerReturnModal(farmerId, intakeId) {
+    let farmer = null;
+    if (farmerId) farmer = await db.farmers.get(farmerId);
+    let intake = null;
+    if (intakeId) {
+      intake = await db.farmerIntakes.get(intakeId);
+      if (!intake && !isNaN(Number(intakeId))) intake = await db.farmerIntakes.get(Number(intakeId));
     }
 
-    document.body.classList.add('printing-receipt');
-    window.print();
-    setTimeout(() => {
-      document.body.classList.remove('printing-receipt');
-    }, 1000);
+    const modal = document.getElementById('farmerReturnModal');
+    if (!modal) return;
+
+    this.selectedFarmerForReturn = farmer ? farmer.id : (intake ? intake.farmerId : null);
+
+    const farmerNameEl = document.getElementById('farmerReturnFarmerName');
+    const farmerIdInput = document.getElementById('farmerReturnFarmerId');
+    const vegSelect = document.getElementById('farmerReturnVegSelect');
+    const weightInput = document.getElementById('farmerReturnWeightInput');
+    const rateInput = document.getElementById('farmerReturnRateInput');
+    const reasonInput = document.getElementById('farmerReturnReasonInput');
+    const dateInput = document.getElementById('farmerReturnDateInput');
+
+    if (farmerNameEl) farmerNameEl.textContent = farmer ? `${farmer.name} (Due: ${formatLKR(farmer.outstandingBalance || 0)})` : (intake ? intake.farmerName : 'Select Farmer');
+    if (farmerIdInput) farmerIdInput.value = this.selectedFarmerForReturn || '';
+
+    // Populate vegetable select options from intake or inventory
+    if (vegSelect) {
+      let optionsHtml = '';
+      if (intake && intake.items && intake.items.length > 0) {
+        optionsHtml = intake.items.map(it => `
+          <option value="${it.name}" data-prod-id="${it.productId || ''}" data-rate="${it.unitPrice || 0}">
+            ${it.name} (Intake Rate: Rs. ${it.unitPrice} / kg)
+          </option>
+        `).join('');
+      } else {
+        const allProds = await db.products.toArray();
+        const fresh = allProds.filter(p => (p.category && p.category.toLowerCase().includes('fresh')) || p.unit === 'kg');
+        optionsHtml = fresh.map(p => `
+          <option value="${p.name}" data-prod-id="${p.id}" data-rate="${p.costPrice || p.sellingPrice || 0}">
+            ${p.name} (Cost: Rs. ${p.costPrice} / kg)
+          </option>
+        `).join('');
+      }
+      vegSelect.innerHTML = optionsHtml;
+      if (vegSelect.options.length > 0) {
+        const firstRate = vegSelect.options[0].getAttribute('data-rate');
+        if (rateInput && firstRate) rateInput.value = firstRate;
+      }
+      vegSelect.onchange = function() {
+        const opt = vegSelect.options[vegSelect.selectedIndex];
+        if (opt && rateInput) rateInput.value = opt.getAttribute('data-rate') || 0;
+      };
+    }
+
+    if (weightInput) weightInput.value = '';
+    if (reasonInput) reasonInput.value = 'නරක් වූ නිසා / ඉතිරි වූ නිසා ආපසු බාරදීම (Unsold / Spoilage Return)';
+    if (dateInput) dateInput.value = new Date().toISOString().slice(0, 10);
+
+    modal.classList.remove('hidden');
+    if (weightInput) weightInput.focus();
+  },
+
+  async saveFarmerReturn(e) {
+    if (e) e.preventDefault();
+    const farmerId = parseInt(document.getElementById('farmerReturnFarmerId')?.value);
+    if (!farmerId || isNaN(farmerId)) {
+      alert('කරුණාකර ගොවියා තෝරන්න (Please select a farmer).');
+      return;
+    }
+
+    const farmer = await db.farmers.get(farmerId);
+    if (!farmer) {
+      alert('Farmer record not found.');
+      return;
+    }
+
+    const vegSelect = document.getElementById('farmerReturnVegSelect');
+    const selectedOpt = vegSelect ? vegSelect.options[vegSelect.selectedIndex] : null;
+    const vegName = vegSelect ? vegSelect.value : '';
+    const prodId = selectedOpt ? parseInt(selectedOpt.getAttribute('data-prod-id')) : null;
+
+    const returnWeight = parseFloat(document.getElementById('farmerReturnWeightInput')?.value) || 0;
+    const returnRate = parseFloat(document.getElementById('farmerReturnRateInput')?.value) || 0;
+    const reason = document.getElementById('farmerReturnReasonInput')?.value.trim() || 'Returned to Farmer';
+    const date = document.getElementById('farmerReturnDateInput')?.value || new Date().toISOString().slice(0, 10);
+
+    if (returnWeight <= 0) {
+      alert('කරුණාකර ආපසු දෙන බර (kg) ඇතුළත් කරන්න (Please enter return weight > 0 kg).');
+      return;
+    }
+
+    const returnTotal = Math.round((returnWeight * returnRate) * 100) / 100;
+    const returnNo = 'FRET-' + Date.now().toString().slice(-6);
+    const currentUser = (window.AuthManager && AuthManager.currentUser) ? AuthManager.currentUser.username : 'Staff';
+
+    // 1. Deduct from Inventory Stock
+    if (prodId) {
+      const prod = await db.products.get(prodId);
+      if (prod) {
+        const newStock = Math.max(0, Math.round(((prod.currentStock || 0) - returnWeight) * 100) / 100);
+        await db.products.update(prodId, { currentStock: newStock });
+      }
+    } else {
+      const allProds = await db.products.toArray();
+      const match = allProds.find(p => p.name.toLowerCase() === vegName.toLowerCase());
+      if (match) {
+        const newStock = Math.max(0, Math.round(((match.currentStock || 0) - returnWeight) * 100) / 100);
+        await db.products.update(match.id, { currentStock: newStock });
+      }
+    }
+
+    // 2. Deduct from Farmer Payable Balance
+    const currentBal = Number(farmer.outstandingBalance || 0);
+    const newBal = Math.max(0, Math.round((currentBal - returnTotal) * 100) / 100);
+    await db.farmers.update(farmerId, {
+      outstandingBalance: newBal
+    });
+
+    // 3. Save to farmerReturns collection
+    const returnRecord = {
+      returnNo,
+      farmerId: farmer.id,
+      farmerName: farmer.name,
+      farmerPhone: farmer.phone || '',
+      produceName: vegName,
+      weightKg: returnWeight,
+      rate: returnRate,
+      totalAmount: returnTotal,
+      reason,
+      date,
+      time: new Date().toTimeString().slice(0, 5),
+      recordedBy: currentUser,
+      timestamp: new Date().toISOString()
+    };
+
+    if (db.farmerReturns) {
+      await db.farmerReturns.add(returnRecord);
+    }
+
+    document.getElementById('farmerReturnModal')?.classList.add('hidden');
+    await this.renderSummaryCards();
+    await this.renderHistoryTable();
+    await this.renderFarmersTable();
+    if (window.InventoryManager) InventoryManager.renderInventoryTable();
+    if (window.SoundManager) SoundManager.playSuccessChime();
+
+    // Print Thermal Return Note
+    this.printFarmerReturnSlip(returnRecord, newBal);
+    alert(`එළවළු ආපසු බාරදීම සාර්ථකයි!\n\n- ${vegName} (${returnWeight} kg)\n- ගොවියාගේ ගිණුමෙන් අඩු වූ මුදල: ${formatLKR(returnTotal)}\n- ඉතිරි ශේෂය: ${formatLKR(newBal)}`);
+  },
+
+  async printFarmerReturnSlip(ret, remainingBal = 0) {
+    const storeName = await getSetting('store_name', 'SUPERMARKET');
+    const phone = await getSetting('store_phone', '');
+    const thermalWidth = await getSetting('thermal_width', '80mm');
+
+    const html = `
+      <div style="text-align: center; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans Sinhala', Arial, sans-serif; font-size: 11px; line-height: 1.35; color: #000; padding: 4px;">
+        <h2 style="font-size: 15px; margin: 0; font-weight: 900; text-transform: uppercase;">${storeName}</h2>
+        ${phone ? `<div style="font-size: 10px; font-weight: bold;">Tel: ${phone}</div>` : ''}
+
+        <div style="border-top: 1.5px dashed #000; border-bottom: 1.5px dashed #000; margin: 6px 0; padding: 4px 0; font-weight: 900; font-size: 12px;">
+          FARMER PRODUCE RETURN NOTE<br>
+          <span style="font-size: 10px; font-weight: bold;">(එළවළු ආපසු බාරදීමේ රිසිට්පත)</span>
+        </div>
+
+        <div style="text-align: left; font-size: 10px; margin-bottom: 8px; line-height: 1.4;">
+          <div>Return No: <strong>${ret.returnNo}</strong></div>
+          <div>Date / Time: <strong>${ret.date} ${ret.time}</strong></div>
+          <div>Farmer: <strong>${ret.farmerName}</strong></div>
+          <div>Authorized By: @${ret.recordedBy || 'staff'}</div>
+        </div>
+
+        <table style="width: 100%; border-collapse: collapse; font-size: 10.5px; margin: 6px 0; text-align: left;">
+          <thead>
+            <tr style="border-top: 1px solid #000; border-bottom: 1px solid #000;">
+              <th style="padding: 3px 0;">Item</th>
+              <th style="text-align: center; padding: 3px 0;">Weight</th>
+              <th style="text-align: right; padding: 3px 0;">Rate</th>
+              <th style="text-align: right; padding: 3px 0;">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr style="border-bottom: 1px dashed #000;">
+              <td style="padding: 4px 0;">${ret.produceName}</td>
+              <td style="text-align: center; font-family: monospace;">${ret.weightKg} kg</td>
+              <td style="text-align: right; font-family: monospace;">Rs. ${ret.rate}</td>
+              <td style="text-align: right; font-family: monospace; font-weight: bold;">-${formatLKR(ret.totalAmount)}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div style="text-align: left; font-size: 10px; margin: 6px 0;">
+          Reason: <em>${ret.reason}</em>
+        </div>
+
+        <div style="text-align: right; font-size: 12px; font-weight: 900; border-top: 1.5px solid #000; padding-top: 4px; margin-top: 4px;">
+          TOTAL RETURN DEBIT: -${formatLKR(ret.totalAmount)}
+        </div>
+        <div style="text-align: right; font-size: 10.5px; margin-top: 2px;">
+          Updated Farmer Due: <strong>${formatLKR(remainingBal)}</strong>
+        </div>
+
+        <div style="margin-top: 20px; display: flex; justify-content: space-between; font-size: 9px;">
+          <div style="border-top: 1px solid #000; width: 45%; text-align: center; padding-top: 2px;">Shop Officer Sign</div>
+          <div style="border-top: 1px solid #000; width: 45%; text-align: center; padding-top: 2px;">Farmer Sign</div>
+        </div>
+      </div>
+    `;
+
+    this._printContent(html, thermalWidth, `Farmer Return - ${ret.returnNo}`);
+  },
+
+  _printContent(html, thermalWidth = '80mm', title = 'Farmer Slip') {
+    const printArea = document.getElementById('thermalReceiptPrintArea');
+    if (printArea) {
+      printArea.innerHTML = html;
+      if (thermalWidth === '58mm') {
+        document.body.classList.add('printer-58mm');
+      } else {
+        document.body.classList.remove('printer-58mm');
+      }
+    }
+
+    const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || window.innerWidth < 768;
+
+    if (isMobile) {
+      let overlay = document.getElementById('mobilePrintOverlay');
+      if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'mobilePrintOverlay';
+        overlay.style.cssText = 'position:fixed;inset:0;background:#fff;z-index:99999;overflow:auto;padding:8mm;display:flex;flex-direction:column;align-items:center;';
+        document.body.appendChild(overlay);
+      }
+      overlay.innerHTML = html;
+      overlay.style.display = 'flex';
+      document.body.classList.add('printing-receipt');
+      setTimeout(() => {
+        window.print();
+        setTimeout(() => {
+          document.body.classList.remove('printing-receipt');
+          overlay.innerHTML = '';
+          overlay.style.display = 'none';
+        }, 1200);
+      }, 150);
+      return;
+    }
+
+    // Dedicated high-resolution desktop thermal print window
+    const printWin = window.open('', '_blank', 'width=380,height=600,top=100,left=100');
+    if (!printWin) {
+      // Fallback if popup blocked
+      document.body.classList.add('printing-receipt');
+      window.print();
+      setTimeout(() => document.body.classList.remove('printing-receipt'), 1000);
+      return;
+    }
+
+    const is58mm = (thermalWidth === '58mm');
+    const receiptWidth = is58mm ? '48mm' : '70mm';
+    const baseFontSize = is58mm ? '10px' : '11px';
+
+    printWin.document.open();
+    printWin.document.write(`<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>${title}</title>
+<style>
+  @page { margin: 0; size: auto; }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color: #000000 !important; }
+  body {
+    background: #ffffff;
+    color: #000000 !important;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans Sinhala", "Iskoola Pota", Arial, sans-serif;
+    font-size: ${baseFontSize};
+    font-weight: 600;
+    line-height: 1.35;
+    padding: 3mm 4mm 6mm 4mm;
+    width: ${receiptWidth};
+    margin: 0 auto;
+  }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { color: #000000 !important; }
+</style>
+</head>
+<body>
+  ${html}
+  <script>
+    window.onload = function() {
+      setTimeout(function() {
+        window.focus();
+        window.print();
+        setTimeout(function() { window.close(); }, 600);
+      }, 100);
+    };
+  <\/script>
+</body>
+</html>`);
+    printWin.document.close();
   }
 };
 
@@ -9914,7 +11148,886 @@ if (typeof document !== 'undefined') {
   });
 }
 
+// ── Alias fixes: HTML calls these short names but functions have longer names ──
+FarmerManager.saveDailyIntake = function(event) {
+  if (event) {
+    if (typeof event.preventDefault === 'function') event.preventDefault();
+    if (typeof event.stopPropagation === 'function') event.stopPropagation();
+  }
+  return FarmerManager.saveFarmerIntake(event);
+};
+FarmerManager.processPaymentSettlement = function(event) {
+  if (event) {
+    if (typeof event.preventDefault === 'function') event.preventDefault();
+    if (typeof event.stopPropagation === 'function') event.stopPropagation();
+  }
+  return FarmerManager.processFarmerPayment(event);
+};
+FarmerManager.onVegSearchInput = function(query) {
+  return FarmerManager.onVegetableSearchInput(query);
+};
+FarmerManager.onVegSearchKeydown = function(event) {
+  return FarmerManager.onVegetableSearchKeydown(event);
+};
+
 window.FarmerManager = FarmerManager;
+
+
+// ==================== js\schoolcredit.js ====================
+
+/**
+ * School Credit Management Module (පාසල් ණය පාලනය)
+ * Dedicated terminal for School Canteens, School Orders & Staff Credit Accounts
+ * - SKU / School Code Support (e.g. SCH-01, SCH-CENTRAL)
+ * - Shared balance syncing with Main Customer / Credit directory
+ * - Direct Day Credit Entry (without POS invoice) with custom date selection
+ * - Settlement collection with thermal payment receipts & A4 official audit statements
+ */
+
+const SchoolCreditManager = {
+  searchQuery: '',
+  historySearchQuery: '',
+  selectedSchoolIdForAction: null,
+  activeSubTab: 'debtors', // 'debtors' | 'history'
+
+  async init() {
+    await this.renderKPIs();
+    await this.renderSchoolDebtorsTable();
+    await this.renderSchoolHistoryTable();
+  },
+
+  setSubTab(tab) {
+    this.activeSubTab = tab;
+    const debtorsView = document.getElementById('schoolCreditDebtorsView');
+    const historyView = document.getElementById('schoolCreditHistoryView');
+    const btnDebtors = document.getElementById('schoolSubTabDebtorsBtn');
+    const btnHistory = document.getElementById('schoolSubTabHistoryBtn');
+
+    if (tab === 'debtors') {
+      if (debtorsView) debtorsView.classList.remove('hidden');
+      if (historyView) historyView.classList.add('hidden');
+      if (btnDebtors) {
+        btnDebtors.className = 'px-4 py-2 bg-sky-600 text-white rounded-xl text-xs font-bold shadow-md shadow-sky-600/30 transition';
+      }
+      if (btnHistory) {
+        btnHistory.className = 'px-4 py-2 bg-slate-800 text-slate-400 hover:text-white rounded-xl text-xs font-bold transition';
+      }
+      this.renderSchoolDebtorsTable();
+    } else {
+      if (debtorsView) debtorsView.classList.add('hidden');
+      if (historyView) historyView.classList.remove('hidden');
+      if (btnDebtors) {
+        btnDebtors.className = 'px-4 py-2 bg-slate-800 text-slate-400 hover:text-white rounded-xl text-xs font-bold transition';
+      }
+      if (btnHistory) {
+        btnHistory.className = 'px-4 py-2 bg-sky-600 text-white rounded-xl text-xs font-bold shadow-md shadow-sky-600/30 transition';
+      }
+      this.renderSchoolHistoryTable();
+    }
+  },
+
+  async ensureDefaultSchool() {
+    let schools = await this.getSchoolCustomers();
+    if (schools.length === 0) {
+      const defaultSchool = {
+        name: 'පාසල් දිවා ආහාර වැඩසටහන (School Meals)',
+        schoolCode: 'SCH-MEAL',
+        phone: '07X XXXXXXX',
+        address: 'පාසල් මුළුතැන්ගෙය / Canteen',
+        creditLimit: 0,
+        openingBalance: 0,
+        creditBalance: 0,
+        isSchool: true,
+        customerType: 'school',
+        createdAt: new Date().toISOString()
+      };
+      const id = await db.customers.add(defaultSchool);
+      defaultSchool.id = id;
+      await this.init();
+      return defaultSchool;
+    }
+    return schools[0];
+  },
+
+  async createDefaultSchoolAndOpen() {
+    const school = await this.ensureDefaultSchool();
+    await this.openSchoolMealCreditModal(school.id);
+  },
+
+  async getSchoolCustomers() {
+    const all = await db.customers.toArray();
+    return all.filter(c => c.isSchool === true || c.customerType === 'school' || (c.schoolCode && c.schoolCode.trim() !== ''));
+  },
+
+  async renderKPIs() {
+    try {
+      const schools = await this.getSchoolCustomers();
+      const allPayments = db.creditPayments ? await db.creditPayments.toArray() : [];
+      const schoolIds = new Set(schools.map(s => s.id));
+
+      const totalDue = schools.reduce((sum, s) => sum + (Number(s.creditBalance) || 0), 0);
+      const activeDebtors = schools.filter(s => (Number(s.creditBalance) || 0) > 0);
+
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const todayCollected = allPayments
+        .filter(p => schoolIds.has(p.customerId) && p.date && p.date.slice(0, 10) === todayStr)
+        .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+
+      const elDue = document.getElementById('schoolTotalDueKpi');
+      const elCount = document.getElementById('schoolActiveCountKpi');
+      const elToday = document.getElementById('schoolTodayCollectedKpi');
+
+      if (elDue) elDue.textContent = formatLKR(totalDue);
+      if (elCount) elCount.textContent = `${activeDebtors.length} / ${schools.length} Schools`;
+      if (elToday) elToday.textContent = formatLKR(todayCollected);
+    } catch (e) {
+      console.warn('Error rendering School KPIs:', e);
+    }
+  },
+
+  async renderSchoolDebtorsTable() {
+    const tbody = document.getElementById('schoolDebtorsTableBody');
+    if (!tbody) return;
+
+    let schools = await this.getSchoolCustomers();
+    if (this.searchQuery) {
+      const q = this.searchQuery.toLowerCase().trim();
+      schools = schools.filter(s =>
+        (s.name && s.name.toLowerCase().includes(q)) ||
+        (s.schoolCode && s.schoolCode.toLowerCase().includes(q)) ||
+        (s.phone && s.phone.includes(q)) ||
+        (s.address && s.address.toLowerCase().includes(q))
+      );
+    }
+
+    if (schools.length === 0) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="7" class="text-center py-10 text-slate-400">
+            <div class="text-3xl mb-2">🏫</div>
+            <div class="font-bold text-slate-200 text-sm">පාසල් ගිණුම් කිසිවක් හමු නොවීය (No School Credit accounts found)</div>
+            <p class="text-xs text-slate-400 mt-1 mb-3">ළමයින්ගේ කෑම උයන දෙමාපියන්ට එළවළු ණයට දීම සඳහා පහසුවෙන්ම ගිණුම සාදන්න</p>
+            <div class="flex items-center justify-center gap-2 flex-wrap">
+              <button onclick="SchoolCreditManager.createDefaultSchoolAndOpen()" class="px-4 py-2 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white rounded-xl text-xs font-extrabold shadow-lg shadow-amber-600/30 transition flex items-center gap-1.5 cursor-pointer">
+                <span>🥕</span> <span>පෙරනිමි පාසල් ආහාර ගිණුම සාදා ණය සටහන් කරන්න</span>
+              </button>
+              <button onclick="SchoolCreditManager.openAddSchoolModal()" class="px-3.5 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer">
+                <span>➕</span> <span>අලුත් පාසලක් එක් කරන්න (Add School)</span>
+              </button>
+            </div>
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
+    tbody.innerHTML = schools.map(s => {
+      const due = Number(s.creditBalance) || 0;
+      const limit = Number(s.creditLimit) || 0;
+      const code = s.schoolCode || 'SCH-' + s.id;
+
+      return `
+        <tr class="border-b border-slate-800/80 hover:bg-slate-800/40 text-xs transition">
+          <td class="p-3 font-mono font-bold text-sky-400">
+            <span class="px-2 py-0.5 bg-sky-950/80 border border-sky-800 rounded-lg text-sky-300">${code}</span>
+          </td>
+          <td class="p-3">
+            <div class="font-extrabold text-slate-100 text-sm flex items-center gap-1.5">
+              <span>🏫</span>
+              <span>${s.name}</span>
+            </div>
+            <div class="text-slate-400 text-[11px] mt-0.5">${s.address || 'No address specified'}</div>
+          </td>
+          <td class="p-3 text-slate-300 font-mono">
+            <div>📞 ${s.phone || '---'}</div>
+            ${s.contactPerson ? `<div class="text-[10px] text-slate-500">Rep: ${s.contactPerson}</div>` : ''}
+          </td>
+          <td class="p-3 text-right font-mono text-slate-400">
+            ${limit > 0 ? formatLKR(limit) : '<span class="text-slate-600">No Limit</span>'}
+          </td>
+          <td class="p-3 text-right font-mono">
+            <span class="text-sm font-black ${due > 0 ? 'text-rose-400' : 'text-emerald-400'}">
+              ${formatLKR(due)}
+            </span>
+          </td>
+          <td class="p-3 text-center">
+            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${due > 0 ? 'bg-rose-950/80 text-rose-300 border border-rose-800' : 'bg-emerald-950/80 text-emerald-300 border border-emerald-800'}">
+              ${due > 0 ? 'ණය හිඟයි (Due)' : 'ගෙවා අවසන් (Settled)'}
+            </span>
+          </td>
+          <td class="p-3 text-right">
+            <div class="flex items-center justify-end gap-1.5 flex-wrap">
+              <button onclick="SchoolCreditManager.openSchoolMealCreditModal(${s.id})" class="px-2.5 py-1 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white rounded-lg text-[11px] font-black transition flex items-center gap-1 shadow-md shadow-amber-600/30" title="දෙමාපියන් එළවළු ණයට ගැනීම (School Meal Vegetable Credit)">
+                <span>🥕</span> <span>එළවළු ණය</span>
+              </button>
+              <button onclick="SchoolCreditManager.openDirectSchoolCreditModal(${s.id})" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 rounded-lg text-[11px] font-bold transition" title="Add Direct Credit without invoice">
+                ➕ ණය
+              </button>
+              <button onclick="SchoolCreditManager.openSchoolSettlementModal(${s.id})" class="px-2.5 py-1 bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-700 text-emerald-300 rounded-lg text-[11px] font-bold transition" title="Collect Payment">
+                💰 අයවීම
+              </button>
+              <button onclick="SchoolCreditManager.openSchoolStatementModal(${s.id})" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-[11px] font-bold transition" title="View Full History / Ledger">
+                📋 විස්තර
+              </button>
+              <button onclick="SchoolCreditManager.openEditSchoolModal(${s.id})" class="p-1 hover:bg-slate-700 text-slate-400 hover:text-white rounded transition" title="Edit School Details">
+                ✏️
+              </button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  },
+
+  async renderSchoolHistoryTable() {
+    const tbody = document.getElementById('schoolHistoryTableBody');
+    if (!tbody) return;
+
+    const schools = await this.getSchoolCustomers();
+    const schoolIds = new Set(schools.map(s => s.id));
+    const schoolMap = new Map(schools.map(s => [s.id, s]));
+
+    // Gather both settlements (payments) and manual direct credits
+    const allPayments = db.creditPayments ? await db.creditPayments.toArray() : [];
+    const allManualCredits = db.manualCredits ? await db.manualCredits.toArray() : [];
+
+    const historyItems = [];
+
+    allPayments.filter(p => schoolIds.has(p.customerId)).forEach(p => {
+      const sch = schoolMap.get(p.customerId);
+      historyItems.push({
+        id: p.id,
+        date: p.date,
+        schoolName: sch?.name || p.customerName || 'School',
+        schoolCode: sch?.schoolCode || '---',
+        type: 'SETTLEMENT',
+        ref: p.receiptNo || 'REC-' + p.id,
+        notes: p.notes || p.paymentMethod || 'Cash Payment',
+        amount: Number(p.amount) || 0,
+        sign: -1,
+        user: p.collectedBy || 'Staff'
+      });
+    });
+
+    allManualCredits.filter(c => schoolIds.has(c.customerId)).forEach(c => {
+      const sch = schoolMap.get(c.customerId);
+      historyItems.push({
+        id: c.id,
+        date: c.date,
+        schoolName: sch?.name || c.customerName || 'School',
+        schoolCode: sch?.schoolCode || '---',
+        type: c.isSchoolMeal ? 'SCHOOL_MEAL_CREDIT' : 'DIRECT_CREDIT',
+        ref: c.refNo || 'CREDIT-' + c.id,
+        notes: c.notes || 'Daily School Credit Charge',
+        amount: Number(c.amount) || 0,
+        sign: 1,
+        user: c.recordedBy || 'Staff'
+      });
+    });
+
+    // Sort newest first
+    historyItems.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+    if (historyItems.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="7" class="text-center py-8 text-slate-500">ගනුදෙනු කිසිවක් හමු නොවීය (No School Credit transactions recorded yet).</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = historyItems.map(item => `
+      <tr class="border-b border-slate-800/80 hover:bg-slate-800/40 text-xs">
+        <td class="p-3 font-mono text-slate-400">${item.date ? item.date.slice(0, 10) : '---'}</td>
+        <td class="p-3 font-mono text-sky-400 font-bold">${item.schoolCode}</td>
+        <td class="p-3 font-bold text-slate-100">${item.schoolName}</td>
+        <td class="p-3">
+          <span class="px-2 py-0.5 rounded text-[10px] font-bold ${item.type === 'SCHOOL_MEAL_CREDIT' ? 'bg-amber-950 text-amber-300 border border-amber-800' : (item.sign > 0 ? 'bg-sky-950 text-sky-300 border border-sky-800' : 'bg-emerald-950 text-emerald-300 border border-emerald-800')}">
+            ${item.type === 'SCHOOL_MEAL_CREDIT' ? '🥕 එළවළු ණය (School Meal)' : (item.sign > 0 ? '➕ ණය දැමීම (Credit)' : '💰 අයවීම (Settlement)')}
+          </span>
+        </td>
+        <td class="p-3 text-slate-400 truncate max-w-xs">${item.notes || '---'}</td>
+        <td class="p-3 text-right font-mono font-bold ${item.sign > 0 ? 'text-amber-400' : 'text-emerald-400'}">
+          ${item.sign > 0 ? '+' : '-'}${formatLKR(item.amount)}
+        </td>
+        <td class="p-3 text-slate-500 text-[11px]">${item.user}</td>
+      </tr>
+    `).join('');
+  },
+
+  openAddSchoolModal() {
+    this.selectedSchoolIdForAction = null;
+    const modal = document.getElementById('schoolCustomerModal');
+    if (!modal) return;
+    document.getElementById('schoolCustomerModalTitle').textContent = 'අලුත් පාසලක් / ආයතනයක් එක් කිරීම (Add School Account)';
+    document.getElementById('schoolCustIdInput').value = '';
+    document.getElementById('schoolCustNameInput').value = '';
+    document.getElementById('schoolCustCodeInput').value = 'SCH-' + Math.floor(100 + Math.random() * 900);
+    document.getElementById('schoolCustPhoneInput').value = '';
+    document.getElementById('schoolCustAddressInput').value = '';
+    document.getElementById('schoolCustLimitInput').value = '50000';
+    document.getElementById('schoolCustOpeningBalInput').value = '0';
+    modal.classList.remove('hidden');
+  },
+
+  async openEditSchoolModal(id) {
+    const cust = await db.customers.get(id);
+    if (!cust) return;
+    this.selectedSchoolIdForAction = cust.id;
+
+    const modal = document.getElementById('schoolCustomerModal');
+    if (!modal) return;
+    document.getElementById('schoolCustomerModalTitle').textContent = `පාසල් විස්තර සංස්කරණය (Edit: ${cust.name})`;
+    document.getElementById('schoolCustIdInput').value = cust.id;
+    document.getElementById('schoolCustNameInput').value = cust.name;
+    document.getElementById('schoolCustCodeInput').value = cust.schoolCode || ('SCH-' + cust.id);
+    document.getElementById('schoolCustPhoneInput').value = cust.phone || '';
+    document.getElementById('schoolCustAddressInput').value = cust.address || '';
+    document.getElementById('schoolCustLimitInput').value = cust.creditLimit || '0';
+    document.getElementById('schoolCustOpeningBalInput').value = cust.openingBalance || '0';
+    modal.classList.remove('hidden');
+  },
+
+  async saveSchoolCustomer(e) {
+    if (e) e.preventDefault();
+    const id = document.getElementById('schoolCustIdInput')?.value;
+    const name = document.getElementById('schoolCustNameInput')?.value.trim();
+    const code = document.getElementById('schoolCustCodeInput')?.value.trim().toUpperCase() || ('SCH-' + Date.now().toString().slice(-4));
+    const phone = document.getElementById('schoolCustPhoneInput')?.value.trim();
+    const address = document.getElementById('schoolCustAddressInput')?.value.trim();
+    const creditLimit = parseFloat(document.getElementById('schoolCustLimitInput')?.value) || 0;
+    const openingBalance = parseFloat(document.getElementById('schoolCustOpeningBalInput')?.value) || 0;
+
+    if (!name) {
+      alert('කරුණාකර පාසලේ නම ඇතුළත් කරන්න (Please enter School Name)');
+      return;
+    }
+
+    const data = {
+      name,
+      schoolCode: code,
+      phone,
+      address,
+      creditLimit,
+      openingBalance,
+      isSchool: true,
+      customerType: 'school',
+      updatedAt: new Date().toISOString()
+    };
+
+    if (id) {
+      await db.customers.update(parseInt(id), data);
+    } else {
+      data.creditBalance = openingBalance;
+      data.createdAt = new Date().toISOString();
+      await db.customers.add(data);
+    }
+
+    document.getElementById('schoolCustomerModal')?.classList.add('hidden');
+    await this.init();
+    if (window.CustomerManager) CustomerManager.init();
+    if (window.SoundManager) SoundManager.playSuccessChime();
+    alert('පාසල් ගිණුම සාර්ථකව සුරකින ලදී! (School account saved successfully)');
+  },
+
+  // =========================================================================
+  // SCHOOL MEAL VEGETABLE CREDIT (කෑම උයන දෙමාපියන් එළවළු ණයට ගැනීම)
+  // =========================================================================
+  async openSchoolMealCreditModal(schoolId) {
+    let schools = await this.getSchoolCustomers();
+    if (schools.length === 0) {
+      const sch = await this.ensureDefaultSchool();
+      schools = [sch];
+    }
+
+    const select = document.getElementById('mealCreditSchoolSelect');
+    if (select) {
+      select.innerHTML = schools.map(s => `
+        <option value="${s.id}" ${(schoolId && s.id === schoolId) || (!schoolId && s === schools[0]) ? 'selected' : ''}>
+          [${s.schoolCode || 'SCH'}] ${s.name} (ණය හිඟය: ${formatLKR(s.creditBalance || 0)})
+        </option>
+      `).join('');
+    }
+
+    const modal = document.getElementById('schoolMealCreditModal');
+    if (!modal) return;
+
+    const targetSchoolId = schoolId || (schools[0] ? schools[0].id : null);
+    document.getElementById('mealCreditSchoolId').value = targetSchoolId || '';
+    document.getElementById('mealCreditParentName').value = '';
+    document.getElementById('mealCreditParentPhone').value = '';
+    document.getElementById('mealCreditDate').value = new Date().toISOString().slice(0, 10);
+    document.getElementById('mealCreditRefNo').value = 'SCH-MEAL-' + Date.now().toString().slice(-4);
+    document.getElementById('mealCreditItemsDesc').value = '';
+    document.getElementById('mealCreditAmount').value = '';
+    const printCheck = document.getElementById('mealCreditPrintSlip');
+    if (printCheck) printCheck.checked = true;
+
+    modal.classList.remove('hidden');
+    setTimeout(() => {
+      document.getElementById('mealCreditParentName')?.focus();
+    }, 100);
+  },
+
+  appendQuickVeg(vegName) {
+    const el = document.getElementById('mealCreditItemsDesc');
+    if (!el) return;
+    const current = el.value.trim();
+    if (!current) {
+      el.value = `${vegName} `;
+    } else {
+      el.value = `${current}, ${vegName} `;
+    }
+    el.focus();
+  },
+
+  async saveSchoolMealCredit(e) {
+    if (e) e.preventDefault();
+    const schoolSelect = document.getElementById('mealCreditSchoolSelect');
+    const schoolId = parseInt(schoolSelect?.value || document.getElementById('mealCreditSchoolId')?.value);
+    if (!schoolId || isNaN(schoolId)) {
+      alert('කරුණාකර පාසලක් තෝරන්න (Please select a School).');
+      return;
+    }
+
+    const school = await db.customers.get(schoolId);
+    if (!school) {
+      alert('පාසල් ගිණුම සොයාගත නොහැක (School not found in database).');
+      return;
+    }
+
+    const parentName = document.getElementById('mealCreditParentName')?.value.trim();
+    if (!parentName) {
+      alert('කරුණාකර එළවළු බාරගත් දෙමාපියන්ගේ නම ඇතුළත් කරන්න.');
+      document.getElementById('mealCreditParentName')?.focus();
+      return;
+    }
+
+    const parentPhone = document.getElementById('mealCreditParentPhone')?.value.trim() || '';
+    const date = document.getElementById('mealCreditDate')?.value || new Date().toISOString().slice(0, 10);
+    const refNo = document.getElementById('mealCreditRefNo')?.value.trim() || ('SCH-M-' + Date.now().toString().slice(-4));
+    const itemsDesc = document.getElementById('mealCreditItemsDesc')?.value.trim();
+    if (!itemsDesc) {
+      alert('කරුණාකර ලබාගත් එළවළු සහ බර විස්තරය ඇතුළත් කරන්න.');
+      document.getElementById('mealCreditItemsDesc')?.focus();
+      return;
+    }
+
+    const amount = parseFloat(document.getElementById('mealCreditAmount')?.value) || 0;
+    if (amount <= 0) {
+      alert('කරුණාකර වලංගු ණය මුදලක් ඇතුළත් කරන්න (Amount > 0).');
+      document.getElementById('mealCreditAmount')?.focus();
+      return;
+    }
+
+    const shouldPrint = document.getElementById('mealCreditPrintSlip')?.checked !== false;
+    const currentUser = (window.AuthManager && AuthManager.currentUser) ? AuthManager.currentUser.username : 'Staff';
+
+    // 1. Save to manualCredits
+    const creditRecord = {
+      customerId: school.id,
+      customerName: school.name,
+      amount: Math.round(amount * 100) / 100,
+      date: date,
+      time: new Date().toTimeString().slice(0, 5),
+      refNo: refNo,
+      parentName: parentName,
+      parentPhone: parentPhone,
+      itemsDescription: itemsDesc,
+      notes: `දෙමාපියන්: ${parentName}${parentPhone ? ' (' + parentPhone + ')' : ''} | එළවළු: ${itemsDesc}`,
+      isSchoolMeal: true,
+      type: 'school_meal_credit',
+      recordedBy: currentUser,
+      timestamp: new Date().toISOString()
+    };
+
+    if (db.manualCredits) {
+      await db.manualCredits.add(creditRecord);
+    }
+
+    // 2. Update School credit balance
+    const currentBal = Number(school.creditBalance || 0);
+    const newBal = Math.round((currentBal + amount) * 100) / 100;
+    await db.customers.update(school.id, {
+      creditBalance: newBal,
+      totalSpent: Math.round(((school.totalSpent || 0) + amount) * 100) / 100
+    });
+
+    document.getElementById('schoolMealCreditModal')?.classList.add('hidden');
+    await this.init();
+    if (window.CustomerManager) CustomerManager.init();
+    if (window.SoundManager) SoundManager.playSuccessChime();
+
+    // 3. Print Slip if checked
+    if (shouldPrint) {
+      this.printSchoolMealSlip(creditRecord, newBal, school);
+    }
+
+    alert(`පාසල් එළවළු ණය සටහන් කිරීම සාර්ථකයි!\n\n- පාසල: ${school.name}\n- බාරගත් දෙමාපියන්: ${parentName}\n- එළවළු: ${itemsDesc}\n- ණය මුදල: Rs. ${formatLKR(amount)}\n- සමස්ත හිඟ ශේෂය: Rs. ${formatLKR(newBal)}`);
+  },
+
+  async printSchoolMealSlip(creditRecord, remainingBal = 0, schoolObj = null) {
+    const storeName = (await getSetting('store_name', '')) || 'LANKA MEGA SUPERMARKET';
+    const storeAddress = (await getSetting('store_address', '')) || 'Main Street, Sri Lanka';
+    const storePhone = (await getSetting('store_phone', '')) || '07X XXXXXXX';
+    const school = schoolObj || (await db.customers.get(creditRecord.customerId));
+
+    const html = `
+      <div style="text-align: center; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans Sinhala', Arial, sans-serif; font-size: 11px; line-height: 1.35; color: #000; padding: 4px;">
+        <h2 style="font-size: 15px; margin: 0; font-weight: 900; text-transform: uppercase;">${storeName}</h2>
+        <div style="font-size: 10px; color: #333;">${storeAddress}</div>
+        ${storePhone ? `<div style="font-size: 10px; font-weight: bold;">Tel: ${storePhone}</div>` : ''}
+
+        <div style="border-top: 1.5px dashed #000; border-bottom: 1.5px dashed #000; margin: 6px 0; padding: 5px 0; font-weight: 900; font-size: 12px;">
+          SCHOOL MEAL VEGETABLE CREDIT<br>
+          <span style="font-size: 10.5px; font-weight: bold;">(පාසල් දිවා ආහාර එළවළු ණය පත්‍රිකාව)</span>
+        </div>
+
+        <div style="text-align: left; font-size: 10px; margin-bottom: 8px; line-height: 1.45;">
+          <div>පාසල (School): <strong>${school?.name || creditRecord.customerName}</strong></div>
+          <div>කේතය (Code): <strong>${school?.schoolCode || 'SCH'}</strong></div>
+          <div>බිල්පත් අංකය (Slip No): <strong>${creditRecord.refNo}</strong></div>
+          <div>දිනය / වේලාව: <strong>${creditRecord.date} ${creditRecord.time || ''}</strong></div>
+          <div>නිකුත් කළේ: @${creditRecord.recordedBy || 'Staff'}</div>
+        </div>
+
+        <div style="border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 5px 0; margin: 6px 0; text-align: left; background: #f9f9f9;">
+          <div style="font-size: 10px; font-weight: bold; color: #444;">බාරගත් දෙමාපියන් (Parent / Cook):</div>
+          <div style="font-size: 12px; font-weight: 900; color: #000;">${creditRecord.parentName}</div>
+          ${creditRecord.parentPhone ? `<div style="font-size: 10px; font-family: monospace;">📞 ${creditRecord.parentPhone}</div>` : ''}
+        </div>
+
+        <div style="border: 1px solid #000; padding: 6px; margin: 6px 0; text-align: left; background: #fff;">
+          <div style="font-size: 10px; font-weight: bold; margin-bottom: 3px;">ලබාගත් එළවළු සහ බර විස්තරය:</div>
+          <div style="font-size: 11px; font-weight: 600; line-height: 1.4; color: #000;">
+            ${creditRecord.itemsDescription}
+          </div>
+        </div>
+
+        <div style="border-top: 1.5px dashed #000; margin-top: 8px; padding-top: 6px; font-size: 11px;">
+          <div style="display: flex; justify-content: space-between; margin-bottom: 3px;">
+            <span>අද ණය වටිනාකම:</span>
+            <strong style="font-size: 13px; font-family: monospace;">Rs. ${formatLKR(creditRecord.amount)}</strong>
+          </div>
+          <div style="display: flex; justify-content: space-between; border-top: 1px solid #000; padding-top: 4px; font-weight: 900;">
+            <span>සමස්ත හිඟ පාසල් ණය:</span>
+            <span style="font-size: 13px; font-family: monospace;">Rs. ${formatLKR(remainingBal)}</span>
+          </div>
+        </div>
+
+        <div style="margin-top: 25px; padding-top: 5px; font-size: 9.5px; text-align: center; border-top: 1px dotted #888;">
+          <div style="display: flex; justify-content: space-between; margin-bottom: 15px;">
+            <div>...........................<br>බාරදුන් අය (Store)</div>
+            <div>...........................<br>බාරගත් අය (Parent)</div>
+          </div>
+          <div>පාසල් ප්‍රධානී / ආහාර කමිටුව වෙත ඉදිරිපත් කිරීමට</div>
+          <div style="font-size: 8px; color: #666; margin-top: 4px;">LankaPOS School Module &bull; ${new Date().toLocaleDateString()}</div>
+        </div>
+      </div>
+    `;
+
+    const printArea = document.getElementById('thermalReceiptPrintArea');
+    if (printArea) {
+      printArea.innerHTML = html;
+    }
+
+    const printWin = window.open('', '_blank', 'width=380,height=600,top=100,left=100');
+    if (!printWin) {
+      document.body.classList.add('printing-receipt');
+      window.print();
+      setTimeout(() => document.body.classList.remove('printing-receipt'), 1000);
+      return;
+    }
+
+    printWin.document.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <title>School Meal Credit - ${creditRecord.refNo}</title>
+        <style>
+          @page { size: 80mm auto; margin: 0; }
+          body { margin: 0; padding: 4mm 3mm; background: #fff; width: 78mm; }
+        </style>
+      </head>
+      <body>
+        ${html}
+        <script>
+          window.onload = function() {
+            setTimeout(function() {
+              window.focus();
+              window.print();
+              setTimeout(function() { window.close(); }, 500);
+            }, 250);
+          };
+        <\/script>
+      </body>
+      </html>
+    `);
+    printWin.document.close();
+  },
+
+  // Direct Credit (Day Credit Charge) without POS Invoice
+  async openDirectSchoolCreditModal(id) {
+    const cust = await db.customers.get(id);
+    if (!cust) return;
+    this.selectedSchoolIdForAction = cust.id;
+
+    const modal = document.getElementById('directCreditModal');
+    if (!modal) return;
+    document.getElementById('directCreditCustName').textContent = `[${cust.schoolCode || 'SCH'}] ${cust.name}`;
+    document.getElementById('directCreditCustId').value = cust.id;
+    document.getElementById('directCreditAmountInput').value = '';
+    document.getElementById('directCreditDateInput').value = new Date().toISOString().slice(0, 10);
+    document.getElementById('directCreditRefInput').value = '';
+    document.getElementById('directCreditNotesInput').value = 'Daily School Canteen / Refreshment Credit';
+    modal.classList.remove('hidden');
+  },
+
+  async openSchoolSettlementModal(id) {
+    const cust = await db.customers.get(id);
+    if (!cust) return;
+    this.selectedSchoolIdForAction = cust.id;
+
+    if (window.CustomerManager && typeof CustomerManager.openCollectCreditModal === 'function') {
+      await CustomerManager.openCollectCreditModal(cust.id);
+    }
+  },
+
+  // Comprehensive Statement Ledger for School
+  async openSchoolStatementModal(id) {
+    const cust = await db.customers.get(id);
+    if (!cust) return;
+
+    this.selectedSchoolIdForAction = cust.id;
+    const modal = document.getElementById('schoolStatementModal');
+    if (!modal) return;
+
+    document.getElementById('stmtSchoolName').textContent = cust.name;
+    document.getElementById('stmtSchoolCode').textContent = cust.schoolCode || ('SCH-' + cust.id);
+    document.getElementById('stmtSchoolPhone').textContent = cust.phone || '---';
+    document.getElementById('stmtSchoolDue').textContent = formatLKR(cust.creditBalance || 0);
+
+    const tbody = document.getElementById('schoolStatementTableBody');
+    if (tbody) {
+      tbody.innerHTML = `<tr><td colspan="6" class="text-center py-4 text-slate-400">Loading ledger records...</td></tr>`;
+
+      // 1. Gather POS Credit Sales
+      const allSales = await db.sales.where('customerId').equals(cust.id).toArray();
+      // 2. Gather Direct Manual Credits
+      const manualCredits = db.manualCredits ? await db.manualCredits.where('customerId').equals(cust.id).toArray() : [];
+      // 3. Gather Settlement Payments
+      const payments = db.creditPayments ? await db.creditPayments.where('customerId').equals(cust.id).toArray() : [];
+
+      const ledger = [];
+
+      // Opening balance
+      if (Number(cust.openingBalance || 0) > 0) {
+        ledger.push({
+          date: cust.createdAt ? cust.createdAt.slice(0, 10) : 'Opening',
+          type: 'OPENING',
+          ref: 'START',
+          notes: 'Opening Credit Balance',
+          debit: Number(cust.openingBalance),
+          credit: 0
+        });
+      }
+
+      allSales.forEach(s => {
+        if (s.paymentMethod === 'credit' || Number(s.creditAmount) > 0) {
+          ledger.push({
+            date: s.timestamp ? s.timestamp.slice(0, 10) : s.date,
+            type: 'POS_INVOICE',
+            ref: s.invoiceNo,
+            notes: `POS Bill (${s.items?.length || 0} items)`,
+            debit: Number(s.creditAmount || s.grandTotal || 0),
+            credit: 0
+          });
+        }
+      });
+
+      manualCredits.forEach(m => {
+        ledger.push({
+          date: m.date,
+          type: 'MANUAL_CREDIT',
+          ref: m.refNo || 'CREDIT',
+          notes: m.isSchoolMeal
+            ? `🥕 [දෙමාපියන්: ${m.parentName || 'දෙමාපියන්'}] ${m.itemsDescription || m.notes}`
+            : (m.notes || 'Direct Day Credit'),
+          debit: Number(m.amount || 0),
+          credit: 0
+        });
+      });
+
+      payments.forEach(p => {
+        ledger.push({
+          date: p.date ? p.date.slice(0, 10) : '---',
+          type: 'SETTLEMENT',
+          ref: p.receiptNo || 'REC',
+          notes: `${p.paymentMethod || 'Cash'} Settlement`,
+          debit: 0,
+          credit: Number(p.amount || 0)
+        });
+      });
+
+      // Sort chronological
+      ledger.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+      let runningBal = 0;
+      tbody.innerHTML = ledger.map(entry => {
+        runningBal += (entry.debit - entry.credit);
+        return `
+          <tr class="border-b border-slate-800 text-xs font-mono">
+            <td class="p-2.5 text-slate-400">${entry.date}</td>
+            <td class="p-2.5 text-sky-400 font-bold">${entry.ref}</td>
+            <td class="p-2.5 text-slate-300 font-sans">${entry.notes}</td>
+            <td class="p-2.5 text-right ${entry.debit > 0 ? 'text-amber-400 font-bold' : 'text-slate-600'}">
+              ${entry.debit > 0 ? formatLKR(entry.debit) : '-'}
+            </td>
+            <td class="p-2.5 text-right ${entry.credit > 0 ? 'text-emerald-400 font-bold' : 'text-slate-600'}">
+              ${entry.credit > 0 ? formatLKR(entry.credit) : '-'}
+            </td>
+            <td class="p-2.5 text-right font-bold text-slate-100">
+              ${formatLKR(runningBal)}
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    modal.classList.remove('hidden');
+  },
+
+  // Print A4 Statement for School
+  async printSchoolStatementA4(id) {
+    const custId = id || this.selectedSchoolIdForAction;
+    const cust = await db.customers.get(custId);
+    if (!cust) return;
+
+    const storeName = (await getSetting('store_name', '')) || 'LANKA MEGA SUPERMARKET';
+    const storeAddress = (await getSetting('store_address', '')) || 'Main Street, Sri Lanka';
+    const storePhone = (await getSetting('store_phone', '')) || '011-2345678';
+
+    // Gather records
+    const allSales = await db.sales.where('customerId').equals(cust.id).toArray();
+    const manualCredits = db.manualCredits ? await db.manualCredits.where('customerId').equals(cust.id).toArray() : [];
+    const payments = db.creditPayments ? await db.creditPayments.where('customerId').equals(cust.id).toArray() : [];
+
+    const ledger = [];
+    if (Number(cust.openingBalance || 0) > 0) {
+      ledger.push({ date: cust.createdAt?.slice(0, 10) || 'Opening', ref: 'START', desc: 'Opening Balance', debit: Number(cust.openingBalance), credit: 0 });
+    }
+    allSales.forEach(s => {
+      if (s.paymentMethod === 'credit' || Number(s.creditAmount) > 0) {
+        ledger.push({ date: s.timestamp?.slice(0, 10) || s.date, ref: s.invoiceNo, desc: 'POS Store Invoice', debit: Number(s.creditAmount || s.grandTotal || 0), credit: 0 });
+      }
+    });
+    manualCredits.forEach(m => {
+      const desc = m.isSchoolMeal
+        ? `🥕 [දෙමාපියන්: ${m.parentName || 'දෙමාපියන්'}] ${m.itemsDescription || m.notes}`
+        : (m.notes || 'Day Credit Charge');
+      ledger.push({ date: m.date, ref: m.refNo || 'CREDIT', desc: desc, debit: Number(m.amount || 0), credit: 0 });
+    });
+    payments.forEach(p => {
+      ledger.push({ date: p.date?.slice(0, 10) || '---', ref: p.receiptNo || 'REC', desc: 'Settlement Payment', debit: 0, credit: Number(p.amount || 0) });
+    });
+
+    ledger.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+    let runningBal = 0;
+    const rowsHtml = ledger.map(l => {
+      runningBal += (l.debit - l.credit);
+      return `
+        <tr>
+          <td>${l.date}</td>
+          <td style="font-family:monospace;font-weight:bold;">${l.ref}</td>
+          <td>${l.desc}</td>
+          <td style="text-align:right;font-family:monospace;">${l.debit > 0 ? formatLKR(l.debit) : '-'}</td>
+          <td style="text-align:right;font-family:monospace;color:#16a34a;">${l.credit > 0 ? formatLKR(l.credit) : '-'}</td>
+          <td style="text-align:right;font-family:monospace;font-weight:bold;">${formatLKR(runningBal)}</td>
+        </tr>
+      `;
+    }).join('');
+
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>School Account Statement - ${cust.name}</title>
+        <style>
+          @page { size: A4 portrait; margin: 12mm; }
+          body { font-family: 'Inter', Arial, sans-serif; font-size: 11px; color: #0f172a; margin: 0; padding: 15px; }
+          .header { display: flex; justify-content: space-between; border-bottom: 2px solid #0284c7; padding-bottom: 10px; margin-bottom: 12px; }
+          .title { font-size: 18px; font-weight: 800; color: #0284c7; }
+          .school-info { background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; margin-bottom: 15px; display: grid; grid-template-columns: 2fr 1fr; }
+          table { width: 100%; border-collapse: collapse; margin-bottom: 15px; }
+          th { background: #0f172a; color: #ffffff; text-align: left; padding: 6px 8px; font-size: 10px; }
+          td { border-bottom: 1px solid #e2e8f0; padding: 6px 8px; }
+          .footer { display: flex; justify-content: space-between; margin-top: 35px; border-top: 1px solid #cbd5e1; padding-top: 10px; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <div>
+            <div class="title">${storeName}</div>
+            <div>${storeAddress} &bull; Tel: ${storePhone}</div>
+            <div style="font-weight: bold; margin-top: 4px; color: #475569;">OFFICIAL SCHOOL CREDIT STATEMENT (පාසල් ණය ප්‍රකාශනය)</div>
+          </div>
+          <div style="text-align: right; font-size: 10px;">
+            <div>Generated: <strong>${new Date().toLocaleString()}</strong></div>
+            <div>Status: <strong style="color: #dc2626;">OUTSTANDING</strong></div>
+          </div>
+        </div>
+
+        <div class="school-info">
+          <div>
+            <div style="font-size: 14px; font-weight: bold; color: #0f172a;">🏫 ${cust.name}</div>
+            <div>Code: <strong>${cust.schoolCode || ('SCH-' + cust.id)}</strong> &bull; Phone: ${cust.phone || '---'}</div>
+            <div>Address: ${cust.address || '---'}</div>
+          </div>
+          <div style="text-align: right;">
+            <div style="font-size: 10px; color: #64748b;">CURRENT BALANCE DUE:</div>
+            <div style="font-size: 18px; font-weight: 900; color: #dc2626; font-family: monospace;">${formatLKR(cust.creditBalance || 0)}</div>
+          </div>
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Ref No</th>
+              <th>Description</th>
+              <th style="text-align: right;">Charges (Debit)</th>
+              <th style="text-align: right;">Payments (Credit)</th>
+              <th style="text-align: right;">Balance</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rowsHtml}
+          </tbody>
+        </table>
+
+        <div class="footer">
+          <div>Authorized Signature: _______________________</div>
+          <div>School / Canteen In-charge: _______________________</div>
+        </div>
+
+        <script>
+          window.onload = function() {
+            setTimeout(function() { window.focus(); window.print(); }, 200);
+          };
+        </script>
+      </body>
+      </html>
+    `;
+
+    const printWin = window.open('', '_blank', 'width=900,height=800');
+    if (printWin) {
+      printWin.document.write(html);
+      printWin.document.close();
+    }
+  }
+};
+
+window.SchoolCreditManager = SchoolCreditManager;
 
 
 // ==================== js\expenses.js ====================
@@ -11294,26 +13407,48 @@ const BackupManager = {
     });
   },
 
-  // Load and apply store logo from Dexie DB
+  // Load and apply store logo from Dexie DB / LocalStorage
   async loadStoreLogo() {
-    const logoData = await getSetting('store_logo', null);
+    let logoData = await getSetting('store_logo', null);
+    if (!logoData) {
+      try {
+        logoData = localStorage.getItem('pos_store_logo_backup');
+      } catch (e) {}
+    }
+
     const headerLogo = document.getElementById('headerLogoContainer');
     const loginLogo = document.getElementById('loginLogoContainer');
     const previewLogo = document.getElementById('settingsLogoPreview');
     const removeBtn = document.getElementById('removeLogoBtn');
 
-    if (logoData) {
+    if (logoData && typeof logoData === 'string' && logoData.startsWith('data:image')) {
       const imgHtml = `<img src="${logoData}" class="w-full h-full object-contain rounded-xl" alt="Store Logo" />`;
-      if (headerLogo) headerLogo.innerHTML = imgHtml;
-      if (loginLogo) loginLogo.innerHTML = `<img src="${logoData}" class="w-full h-full object-contain rounded-2xl" alt="Store Logo" />`;
+      if (headerLogo) {
+        headerLogo.innerHTML = imgHtml;
+        headerLogo.classList.remove('bg-gradient-to-tr', 'from-sky-600', 'to-emerald-500');
+        headerLogo.classList.add('bg-slate-800');
+      }
+      if (loginLogo) {
+        loginLogo.innerHTML = `<img src="${logoData}" class="w-full h-full object-contain rounded-2xl" alt="Store Logo" />`;
+        loginLogo.classList.remove('bg-gradient-to-tr', 'from-sky-600', 'to-emerald-500');
+        loginLogo.classList.add('bg-slate-800');
+      }
       if (previewLogo) {
         previewLogo.innerHTML = `<img src="${logoData}" class="max-h-24 max-w-full object-contain mx-auto rounded-lg shadow" />`;
       }
       if (removeBtn) removeBtn.classList.remove('hidden');
     } else {
       const defaultIcon = `<svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"/></svg>`;
-      if (headerLogo) headerLogo.innerHTML = defaultIcon;
-      if (loginLogo) loginLogo.innerHTML = `<svg class="w-9 h-9 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"/></svg>`;
+      if (headerLogo) {
+        headerLogo.innerHTML = defaultIcon;
+        headerLogo.classList.remove('bg-slate-800');
+        headerLogo.classList.add('bg-gradient-to-tr', 'from-sky-600', 'to-emerald-500');
+      }
+      if (loginLogo) {
+        loginLogo.innerHTML = `<svg class="w-9 h-9 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"/></svg>`;
+        loginLogo.classList.remove('bg-slate-800');
+        loginLogo.classList.add('bg-gradient-to-tr', 'from-sky-600', 'to-emerald-500');
+      }
       if (previewLogo) {
         previewLogo.innerHTML = `<div class="text-xs text-slate-500 py-3">No custom logo uploaded yet.</div>`;
       }
@@ -11321,34 +13456,84 @@ const BackupManager = {
     }
   },
 
+  // Helper to downscale and compress any chosen logo image to optimal POS dimensions & low KB
+  compressLogoImage(file, maxDimension = 280, quality = 0.85) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('Failed to read image file'));
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onerror = () => reject(new Error('Selected file is not a valid image'));
+        img.onload = () => {
+          let w = img.naturalWidth || img.width;
+          let h = img.naturalHeight || img.height;
+          if (w > maxDimension || h > maxDimension) {
+            if (w >= h) {
+              h = Math.round((h * maxDimension) / w);
+              w = maxDimension;
+            } else {
+              w = Math.round((w * maxDimension) / h);
+              h = maxDimension;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.max(1, w);
+          canvas.height = Math.max(1, h);
+          const ctx = canvas.getContext('2d');
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+          ctx.drawImage(img, 0, 0, w, h);
+          const mimeType = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+          const dataUrl = canvas.toDataURL(mimeType, quality);
+          resolve(dataUrl);
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  },
+
   // Upload Logo from Gallery / File System
   async handleLogoUpload(fileInput) {
-    const file = fileInput.files[0];
-    if (!file) return;
+    try {
+      const file = fileInput.files && fileInput.files[0];
+      if (!file) return;
 
-    if (file.size > 2 * 1024 * 1024) {
-      alert('Logo file size is too large. Please select an image under 2MB.');
-      fileInput.value = '';
-      return;
-    }
+      if (file.size > 10 * 1024 * 1024) {
+        alert('කරුණාකර 10MB ට අඩු ඡායාරූපයක් තෝරන්න (Image is too large, max 10MB).');
+        fileInput.value = '';
+        return;
+      }
 
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      const base64 = e.target.result;
-      await setSetting('store_logo', base64);
+      // Automatically compress and resize to optimal logo size (approx 15KB - 40KB)
+      const compressedDataUrl = await this.compressLogoImage(file, 280, 0.85);
+
+      // Save to settings
+      await setSetting('store_logo', compressedDataUrl);
+      // Also save to dedicated localStorage key as instant fallback
+      try {
+        localStorage.setItem('pos_store_logo_backup', compressedDataUrl);
+      } catch (e) {}
+
       await this.loadStoreLogo();
-      SoundManager.playSuccessChime();
-      alert('Store Logo uploaded and saved successfully!');
-    };
-    reader.readAsDataURL(file);
+      if (window.SoundManager) SoundManager.playSuccessChime();
+      alert('වෙළඳසැල් ලාංඡනය (Store Logo) සාර්ථකව ඇතුළත් විය! (Logo saved successfully)');
+      fileInput.value = '';
+    } catch (err) {
+      console.error('[BackupManager] Logo upload error:', err);
+      alert('ලාංඡනය ඇතුළත් කිරීමට නොහැකි විය: ' + (err.message || 'Error uploading logo'));
+    }
   },
 
   // Remove Logo
   async removeStoreLogo() {
     if (confirm('Remove custom store logo and revert to default icon?')) {
       await setSetting('store_logo', null);
+      try {
+        localStorage.removeItem('pos_store_logo_backup');
+      } catch (e) {}
       await this.loadStoreLogo();
-      SoundManager.playSuccessChime();
+      if (window.SoundManager) SoundManager.playSuccessChime();
     }
   },
 
@@ -11902,7 +14087,8 @@ const DashboardManager = {
     allProducts.forEach(p => {
       const stock = Number(p.currentStock) || 0;
       totalStockValuation += (Number(p.costPrice) || 0) * stock;
-      if (stock <= (p.minStock || 0)) lowStockCount++;
+      const minThreshold = Number(p.minStock) || 0;
+      if (minThreshold > 0 && stock <= minThreshold && stock > 0) lowStockCount++;
       if (p.expiryDate) {
         const exp = new Date(p.expiryDate);
         if (exp <= now) expiredCount++;
@@ -12069,7 +14255,11 @@ const DashboardManager = {
     const container = document.getElementById('dashAlertsContainer');
     if (!container) return;
 
-    const lowStockItems = allProducts.filter(p => (Number(p.currentStock) || 0) <= (p.minStock || 0));
+    const lowStockItems = allProducts.filter(p => {
+      const min = Number(p.minStock) || 0;
+      const stock = Number(p.currentStock) || 0;
+      return min > 0 && stock <= min && stock > 0;
+    });
     const expiredItems = allProducts.filter(p => p.expiryDate && new Date(p.expiryDate) <= now);
     const nearExpiryItems = allProducts.filter(p => p.expiryDate && new Date(p.expiryDate) > now && new Date(p.expiryDate) <= in30Days);
 
@@ -12383,6 +14573,7 @@ const App = {
     this.setupKeyboardShortcuts();
     this.setupScannerWedgeListener();
     this.setupMouseWheelScrollSupport();
+    this.setupIdleWakeupWatchers();
 
     // 2. Init Auth Manager FIRST so user can log in instantly
     try {
@@ -12494,6 +14685,7 @@ const App = {
       else if (tabName === 'grn' && window.GRNManager) GRNManager.init();
       else if (tabName === 'customers' && window.CustomerManager) CustomerManager.init();
       else if (tabName === 'credit' && window.CustomerManager) CustomerManager.initCreditTab();
+      else if (tabName === 'schoolcredit' && window.SchoolCreditManager) SchoolCreditManager.init();
       else if (tabName === 'suppliers' && window.SupplierManager) SupplierManager.init();
       else if (tabName === 'farmers' && window.FarmerManager) FarmerManager.init();
       else if (tabName === 'expenses' && window.ExpenseManager) ExpenseManager.init();
@@ -12806,6 +14998,28 @@ const App = {
           console.warn('[ServiceWorker] Registration failed:', err);
         });
     }
+  },
+
+  setupIdleWakeupWatchers() {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        console.log('[App] Resumed from idle/background state.');
+        this.startLiveClock();
+        if (window.AuthManager && AuthManager.isLoggedIn()) {
+          AuthManager.updateUI();
+          if (this.currentTab === 'pos' && window.POSManager) {
+            try {
+              POSManager.renderProductGrid();
+              POSManager.renderCart();
+            } catch (e) {}
+          }
+        }
+      }
+    });
+
+    window.addEventListener('focus', () => {
+      this.startLiveClock();
+    });
   }
 };
 
@@ -12917,6 +15131,4 @@ if (document.readyState === 'loading') {
 } else {
   App.init();
 }
-
-
 

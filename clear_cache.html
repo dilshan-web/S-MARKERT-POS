@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Clear Cache & Reload POS</title>
+<style>
+  body { background:#0f172a; color:#e2e8f0; font-family:sans-serif; display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; margin:0; }
+  h2 { color:#38bdf8; margin-bottom:1rem; }
+  .status { font-size:14px; color:#94a3b8; margin:6px 0; }
+  .ok { color:#34d399; }
+  .btn { margin-top:1.5rem; padding:14px 32px; background:#0ea5e9; color:white; border:none; border-radius:12px; font-size:16px; font-weight:bold; cursor:pointer; }
+  .btn:hover { background:#38bdf8; }
+</style>
+</head>
+<body>
+<h2>🔄 POS Cache Clearing...</h2>
+<div id="log"></div>
+<script>
+const log = document.getElementById('log');
+function msg(text, ok) {
+  const d = document.createElement('div');
+  d.className = 'status' + (ok ? ' ok' : '');
+  d.textContent = text;
+  log.appendChild(d);
+}
+
+async function clearAll() {
+  // 1. Unregister all service workers
+  if ('serviceWorker' in navigator) {
+    const regs = await navigator.serviceWorker.getRegistrations();
+    for (const r of regs) {
+      await r.unregister();
+      msg('✅ Service Worker unregistered: ' + r.scope, true);
+    }
+    if (regs.length === 0) msg('ℹ️ No Service Workers found', false);
+  }
+
+  // 2. Delete all caches
+  if ('caches' in window) {
+    const names = await caches.keys();
+    for (const n of names) {
+      await caches.delete(n);
+      msg('✅ Cache deleted: ' + n, true);
+    }
+    if (names.length === 0) msg('ℹ️ No caches found', false);
+  }
+
+  msg('✅ All done! Redirecting to POS in 2 seconds...', true);
+
+  // 3. Redirect to POS via localhost
+  setTimeout(() => {
+    window.location.href = 'http://localhost:8080/index.html';
+  }, 2000);
+}
+
+clearAll();
+</script>
+</body>
+</html>
