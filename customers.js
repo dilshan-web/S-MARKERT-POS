@@ -58,6 +58,9 @@ const CustomerManager = {
           ${formatLKR(c.totalSpent || 0)}
         </td>
         <td class="p-3 text-right space-x-1 whitespace-nowrap">
+          <button onclick="CustomerManager.openCustomerStatementModal(${c.id})" class="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-bold transition inline-flex items-center gap-1 shadow-sm cursor-pointer" title="ගනුදෙනු ඉතිහාසය හා ලෙජරය (All Transactions Ledger)">
+            <span>📋</span> <span>ඉතිහාසය</span>
+          </button>
           <button onclick="CustomerManager.selectCustomerForPOS(${c.id})" class="px-2.5 py-1 bg-sky-700 hover:bg-sky-600 text-white rounded-lg text-xs font-semibold transition" title="Use in POS Terminal">
             POS
           </button>
@@ -232,26 +235,57 @@ const CustomerManager = {
   },
 
   // Modal to pick customer in POS screen
-  async openCustomerSelectModal() {
-    const container = document.getElementById('posCustomerSelectList');
-    const input = document.getElementById('posCustomerSearchInput');
+  renderCustomerSelectCards(customers, container) {
     if (!container) return;
+    if (customers.length === 0) {
+      container.innerHTML = `<div class="text-center py-8 text-slate-400 text-xs font-medium">පාරිභෝගිකයින් හමු නොවීය (No matching customers).</div>`;
+      return;
+    }
 
-    const customers = await db.customers.toArray();
     container.innerHTML = customers.map(c => `
-      <div onclick="CustomerManager.selectCustomerForPOS(${c.id})" class="p-3 bg-slate-900 border border-slate-700 hover:border-sky-500 rounded-xl cursor-pointer flex items-center justify-between transition">
+      <div onclick="CustomerManager.selectCustomerForPOS(${c.id})" class="p-3 bg-slate-900 border ${c.isSchool || c.customerType === 'school' ? 'border-amber-500/70 bg-amber-950/20 hover:border-amber-400' : 'border-slate-700 hover:border-sky-500'} rounded-2xl cursor-pointer flex items-center justify-between transition shadow-sm">
         <div>
-          <div class="font-bold text-slate-100 text-sm">${c.name}</div>
-          <div class="text-xs text-slate-400 font-mono">📱 ${c.phone}</div>
+          <div class="font-extrabold text-slate-100 text-sm flex items-center gap-1.5 flex-wrap">
+            <span>${c.name}</span>
+            ${c.isSchool || c.customerType === 'school' ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-950 text-amber-300 border border-amber-600">🏫 ${c.schoolName || 'පාසල් ණය'}</span>` : ''}
+          </div>
+          <div class="text-xs text-slate-400 font-mono mt-0.5">📱 ${c.phone || 'No phone'} ${c.address ? '&bull; ' + c.address : ''}</div>
         </div>
         <div class="text-right font-mono text-xs">
-          <div class="text-slate-400">Credit: <strong class="${(c.creditBalance || 0) > 0 ? 'text-rose-400' : 'text-emerald-400'}">${formatLKR(c.creditBalance || 0)}</strong></div>
-          <span class="text-sky-400 text-xs font-semibold">Select &rarr;</span>
+          <div class="text-slate-400">ණය: <strong class="${(c.creditBalance || 0) > 0 ? 'text-rose-400 font-black' : 'text-emerald-400'}">${formatLKR(c.creditBalance || 0)}</strong></div>
+          <span class="text-sky-400 text-xs font-bold">තෝරන්න &rarr;</span>
         </div>
       </div>
     `).join('');
+  },
 
-    document.getElementById('posCustomerModal').classList.remove('hidden');
+  async openCustomerSelectModal(filterType = 'all') {
+    this.posCustomerFilterType = filterType;
+    const container = document.getElementById('posCustomerSelectList');
+    const input = document.getElementById('posCustomerSearchInput');
+    const btnAll = document.getElementById('posCustFilter_all');
+    const btnSchool = document.getElementById('posCustFilter_school');
+
+    if (btnAll && btnSchool) {
+      if (filterType === 'school') {
+        btnAll.className = 'px-3 py-1 bg-slate-800 text-slate-300 hover:text-white rounded-lg text-xs font-bold transition';
+        btnSchool.className = 'px-3 py-1 bg-amber-600 text-white rounded-lg text-xs font-bold transition flex items-center gap-1 shadow-md shadow-amber-600/30';
+      } else {
+        btnAll.className = 'px-3 py-1 bg-sky-600 text-white rounded-lg text-xs font-bold transition shadow-md shadow-sky-600/30';
+        btnSchool.className = 'px-3 py-1 bg-slate-800 text-slate-300 hover:text-white rounded-lg text-xs font-bold transition flex items-center gap-1';
+      }
+    }
+
+    if (!container) return;
+
+    let customers = await db.customers.toArray();
+    if (filterType === 'school') {
+      customers = customers.filter(c => c.isSchool === true || c.customerType === 'school' || (c.schoolName && c.schoolName.trim() !== ''));
+    }
+
+    this.renderCustomerSelectCards(customers, container);
+
+    document.getElementById('posCustomerModal')?.classList.remove('hidden');
     if (input) {
       input.value = '';
       input.focus();
@@ -262,36 +296,39 @@ const CustomerManager = {
     const container = document.getElementById('posCustomerSelectList');
     if (!container) return;
 
-    const q = query.toLowerCase().trim();
+    const q = (query || '').toLowerCase().trim();
     let customers = await db.customers.toArray();
-    if (q) {
-      customers = customers.filter(c => c.name.toLowerCase().includes(q) || (c.phone && c.phone.includes(q)));
+    if (this.posCustomerFilterType === 'school') {
+      customers = customers.filter(c => c.isSchool === true || c.customerType === 'school' || (c.schoolName && c.schoolName.trim() !== ''));
     }
 
-    container.innerHTML = customers.map(c => `
-      <div onclick="CustomerManager.selectCustomerForPOS(${c.id})" class="p-3 bg-slate-900 border border-slate-700 hover:border-sky-500 rounded-xl cursor-pointer flex items-center justify-between transition">
-        <div>
-          <div class="font-bold text-slate-100 text-sm">${c.name}</div>
-          <div class="text-xs text-slate-400 font-mono">📱 ${c.phone}</div>
-        </div>
-        <div class="text-right font-mono text-xs">
-          <div class="text-slate-400">Credit: <strong class="${(c.creditBalance || 0) > 0 ? 'text-rose-400' : 'text-emerald-400'}">${formatLKR(c.creditBalance || 0)}</strong></div>
-          <span class="text-sky-400 text-xs font-semibold">Select &rarr;</span>
-        </div>
-      </div>
-    `).join('');
+    if (q) {
+      customers = customers.filter(c => 
+        (c.name && c.name.toLowerCase().includes(q)) || 
+        (c.phone && c.phone.includes(q)) ||
+        (c.schoolName && c.schoolName.toLowerCase().includes(q))
+      );
+    }
+
+    this.renderCustomerSelectCards(customers, container);
   },
 
   async selectCustomerForPOS(id) {
-    const customer = await db.customers.get(id);
+    let customer = await db.customers.get(id);
+    if (!customer && !isNaN(Number(id))) customer = await db.customers.get(Number(id));
     if (customer) {
-      POSManager.setCustomer(customer);
-      const modal = document.getElementById('posCustomerModal');
-      if (modal) modal.classList.add('hidden');
-      SoundManager.playScanBeep();
-      if (App.currentTab !== 'pos') {
-        App.switchTab('pos');
+      if (window.POSManager) {
+        POSManager.selectedCustomer = customer;
+        const display = document.getElementById('selectedCustomerDisplay');
+        if (display) {
+          const badge = (customer.isSchool || customer.customerType === 'school') ? ` 🏫 (${customer.schoolName || 'පාසල් ණය'})` : '';
+          display.textContent = `${customer.name}${badge} - ${customer.phone || ''}`;
+        }
+        POSManager.updateCustomerSelectionUI();
       }
+      document.getElementById('posCustomerModal')?.classList.add('hidden');
+      if (window.App) App.switchTab('pos');
+      if (window.SoundManager) SoundManager.playSuccessChime();
     }
   },
 
@@ -722,7 +759,8 @@ const CustomerManager = {
 
   // Open Full Customer Ledger / Statement
   async openCustomerStatementModal(id) {
-    const cust = await db.customers.get(id);
+    let cust = await db.customers.get(id);
+    if (!cust && !isNaN(Number(id))) cust = await db.customers.get(Number(id));
     if (!cust) return;
 
     const modal = document.getElementById('customerStatementModal');
@@ -737,18 +775,39 @@ const CustomerManager = {
     if (tbody) {
       tbody.innerHTML = `<tr><td colspan="6" class="text-center py-4 text-slate-400">Loading ledger records...</td></tr>`;
 
-      // 1. POS Credit Sales
-      const allSales = await db.sales.where('customerId').equals(cust.id).toArray();
+      // 1. Sales (both Credit and Cash/Card so user sees full transaction history!)
+      let allSales = [];
+      try {
+        const salesRaw = await db.sales.toArray();
+        allSales = salesRaw.filter(s => s.customerId == cust.id || String(s.customerId) === String(cust.id) || (cust.phone && s.customerPhone && s.customerPhone === cust.phone));
+      } catch (e) {
+        allSales = await db.sales.where('customerId').equals(cust.id).toArray();
+      }
+
       // 2. Direct Manual Credits
-      const manualCredits = db.manualCredits ? await db.manualCredits.where('customerId').equals(cust.id).toArray() : [];
+      let manualCredits = [];
+      try {
+        if (db.manualCredits) {
+          const rawM = await db.manualCredits.toArray();
+          manualCredits = rawM.filter(m => m.customerId == cust.id || String(m.customerId) === String(cust.id));
+        }
+      } catch (e) {}
+
       // 3. Settlement Payments
-      const payments = db.creditPayments ? await db.creditPayments.where('customerId').equals(cust.id).toArray() : [];
+      let payments = [];
+      try {
+        if (db.creditPayments) {
+          const rawP = await db.creditPayments.toArray();
+          payments = rawP.filter(p => p.customerId == cust.id || String(p.customerId) === String(cust.id));
+        }
+      } catch (e) {}
 
       const ledger = [];
       if (Number(cust.openingBalance || 0) > 0) {
         ledger.push({
           date: cust.createdAt ? cust.createdAt.slice(0, 10) : 'Opening',
           ref: 'START',
+          saleId: null,
           notes: 'Opening Credit Balance (ආරම්භක ණය)',
           debit: Number(cust.openingBalance),
           credit: 0
@@ -756,13 +815,28 @@ const CustomerManager = {
       }
 
       allSales.forEach(s => {
-        if (s.paymentMethod === 'credit' || Number(s.creditAmount) > 0) {
+        const isCredit = (s.paymentMethod === 'credit' || Number(s.creditAmount) > 0);
+        const billTotal = Number(s.grandTotal || 0);
+        const creditPart = Number(s.creditAmount || (isCredit ? billTotal : 0));
+
+        if (isCredit) {
           ledger.push({
-            date: s.timestamp ? s.timestamp.slice(0, 10) : s.date,
+            date: s.timestamp ? s.timestamp.slice(0, 10) : (s.date || '---'),
             ref: s.invoiceNo,
-            notes: `Store Invoice (${s.items?.length || 0} items)`,
-            debit: Number(s.creditAmount || s.grandTotal || 0),
+            saleId: s.id,
+            notes: `Store Invoice (${(s.paymentMethod || 'credit').toUpperCase()}) - ${s.items?.length || 0} items`,
+            debit: creditPart,
             credit: 0
+          });
+        } else {
+          // Cash/Card/Bank bill: Show full transaction with debit & credit equal (fully paid)
+          ledger.push({
+            date: s.timestamp ? s.timestamp.slice(0, 10) : (s.date || '---'),
+            ref: s.invoiceNo,
+            saleId: s.id,
+            notes: `Store Bill (${(s.paymentMethod || 'CASH').toUpperCase()} Paid)`,
+            debit: billTotal,
+            credit: billTotal
           });
         }
       });
@@ -771,6 +845,7 @@ const CustomerManager = {
         ledger.push({
           date: m.date,
           ref: m.refNo || 'CREDIT',
+          saleId: null,
           notes: m.notes || 'Direct Day Credit (දෛනික ණය)',
           debit: Number(m.amount || 0),
           credit: 0
@@ -781,6 +856,7 @@ const CustomerManager = {
         ledger.push({
           date: p.date ? p.date.slice(0, 10) : '---',
           ref: p.receiptNo || 'REC',
+          saleId: null,
           notes: `${p.paymentMethod || 'Cash'} Settlement (ණය ගෙවීම)`,
           debit: 0,
           credit: Number(p.amount || 0)
@@ -793,9 +869,16 @@ const CustomerManager = {
       tbody.innerHTML = ledger.map(entry => {
         runningBal += (entry.debit - entry.credit);
         return `
-          <tr class="border-b border-slate-800 text-xs font-mono">
+          <tr class="border-b border-slate-800 text-xs font-mono hover:bg-slate-800/40">
             <td class="p-2.5 text-slate-400">${entry.date}</td>
-            <td class="p-2.5 text-sky-400 font-bold">${entry.ref}</td>
+            <td class="p-2.5">
+              ${entry.saleId ? `
+                <button type="button" onclick="CustomerManager.viewCustomerInvoice('${entry.saleId}')" class="text-sky-400 hover:text-sky-300 font-bold hover:underline cursor-pointer flex items-center gap-1" title="බිල්පත බලන්න (View Invoice & Details)">
+                  <span>${entry.ref}</span>
+                  <span class="text-[10px] bg-sky-950 px-1 py-0.2 rounded border border-sky-800 text-sky-400">බිල ↗</span>
+                </button>
+              ` : `<span class="text-sky-400 font-bold">${entry.ref}</span>`}
+            </td>
             <td class="p-2.5 text-slate-300 font-sans">${entry.notes}</td>
             <td class="p-2.5 text-right ${entry.debit > 0 ? 'text-amber-400 font-bold' : 'text-slate-600'}">
               ${entry.debit > 0 ? formatLKR(entry.debit) : '-'}
@@ -814,34 +897,68 @@ const CustomerManager = {
     modal.classList.remove('hidden');
   },
 
+  async viewCustomerInvoice(saleId) {
+    document.getElementById('customerStatementModal')?.classList.add('hidden');
+    if (window.POSManager) {
+      await POSManager.openSalesHistoryModal();
+      await POSManager.showSaleDetailsForReturn(saleId);
+    }
+  },
+
   // Print Customer Statement in A4 PDF format
   async printCustomerStatementA4(id) {
     const custId = id || this.selectedCustomerIdForStatement;
-    const cust = await db.customers.get(custId);
+    let cust = await db.customers.get(custId);
+    if (!cust && !isNaN(Number(custId))) cust = await db.customers.get(Number(custId));
     if (!cust) return;
 
     const storeName = (await getSetting('store_name', '')) || 'LANKA MEGA SUPERMARKET';
     const storeAddress = (await getSetting('store_address', '')) || 'Main Street, Sri Lanka';
     const storePhone = (await getSetting('store_phone', '')) || '011-2345678';
 
-    const allSales = await db.sales.where('customerId').equals(cust.id).toArray();
-    const manualCredits = db.manualCredits ? await db.manualCredits.where('customerId').equals(cust.id).toArray() : [];
-    const payments = db.creditPayments ? await db.creditPayments.where('customerId').equals(cust.id).toArray() : [];
+    let allSales = [];
+    try {
+      const salesRaw = await db.sales.toArray();
+      allSales = salesRaw.filter(s => s.customerId == cust.id || String(s.customerId) === String(cust.id) || (cust.phone && s.customerPhone && s.customerPhone === cust.phone));
+    } catch (e) {
+      allSales = await db.sales.where('customerId').equals(cust.id).toArray();
+    }
+
+    let manualCredits = [];
+    try {
+      if (db.manualCredits) {
+        const rawM = await db.manualCredits.toArray();
+        manualCredits = rawM.filter(m => m.customerId == cust.id || String(m.customerId) === String(cust.id));
+      }
+    } catch (e) {}
+
+    let payments = [];
+    try {
+      if (db.creditPayments) {
+        const rawP = await db.creditPayments.toArray();
+        payments = rawP.filter(p => p.customerId == cust.id || String(p.customerId) === String(cust.id));
+      }
+    } catch (e) {}
 
     const ledger = [];
     if (Number(cust.openingBalance || 0) > 0) {
-      ledger.push({ date: cust.createdAt?.slice(0, 10) || 'Opening', ref: 'START', desc: 'Opening Balance', debit: Number(cust.openingBalance), credit: 0 });
+      ledger.push({ date: cust.createdAt?.slice(0, 10) || 'Opening', ref: 'START', desc: 'Opening Balance (ආරම්භක ණය)', debit: Number(cust.openingBalance), credit: 0 });
     }
     allSales.forEach(s => {
-      if (s.paymentMethod === 'credit' || Number(s.creditAmount) > 0) {
-        ledger.push({ date: s.timestamp?.slice(0, 10) || s.date, ref: s.invoiceNo, desc: 'Store POS Invoice', debit: Number(s.creditAmount || s.grandTotal || 0), credit: 0 });
+      const isCredit = (s.paymentMethod === 'credit' || Number(s.creditAmount) > 0);
+      const billTotal = Number(s.grandTotal || 0);
+      const creditPart = Number(s.creditAmount || (isCredit ? billTotal : 0));
+      if (isCredit) {
+        ledger.push({ date: s.timestamp?.slice(0, 10) || s.date || '---', ref: s.invoiceNo, desc: `Store Invoice (${(s.paymentMethod || 'credit').toUpperCase()})`, debit: creditPart, credit: 0 });
+      } else {
+        ledger.push({ date: s.timestamp?.slice(0, 10) || s.date || '---', ref: s.invoiceNo, desc: `Store Bill (${(s.paymentMethod || 'CASH').toUpperCase()} Paid)`, debit: billTotal, credit: billTotal });
       }
     });
     manualCredits.forEach(m => {
       ledger.push({ date: m.date, ref: m.refNo || 'CREDIT', desc: m.notes || 'Direct Day Credit', debit: Number(m.amount || 0), credit: 0 });
     });
     payments.forEach(p => {
-      ledger.push({ date: p.date?.slice(0, 10) || '---', ref: p.receiptNo || 'REC', desc: 'Settlement Payment', debit: 0, credit: Number(p.amount || 0) });
+      ledger.push({ date: p.date?.slice(0, 10) || '---', ref: p.receiptNo || 'REC', desc: `${p.paymentMethod || 'Cash'} Settlement`, debit: 0, credit: Number(p.amount || 0) });
     });
 
     ledger.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
@@ -929,7 +1046,7 @@ const CustomerManager = {
           window.onload = function() {
             setTimeout(function() { window.focus(); window.print(); }, 200);
           };
-        </script>
+        <\/script>
       </body>
       </html>
     `;

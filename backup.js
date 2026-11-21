@@ -319,11 +319,13 @@ const BackupManager = {
   async confirmAndExecuteReset() {
     const selectedOption = document.querySelector('input[name="resetOptionChoice"]:checked')?.value || 'full';
 
-    const confirmText = selectedOption === 'full' 
-      ? 'ඔබට සම්පූර්ණ පද්ධතියම (Products, Sales, Reports) Reset කර ආරම්භක තත්වයට පත්කිරීමට අවශ්‍ය බව තහවුරු කරන්න ද?' 
-      : 'ඔබට සියලුම Sales History, Invoices, Shifts සහ Reports පමණක් 0 දක්වා Reset කිරීමට අවශ්‍ය බව තහවුරු කරන්න ද?';
+    const confirmMessages = {
+      full: 'ඔබට සම්පූර්ණ පද්ධතියම (Products, Sales, Customers, Farmers, Reports) Reset කර ආරම්භක තත්වයට පත්කිරීමට අවශ්‍ය බව තහවුරු කරන්න ද?',
+      transactions_only: 'ඔබට Sales, Invoices, Shifts සහ Reports පමණක් Reset කිරීමට (Products & Customers ඉතිරිව) අවශ්‍ය බව තහවුරු කරන්න ද?',
+      selective: 'ඔබ තෝරාගත් දත්ත (Products, Customers, Credit Balances, Farmers) Delete කිරීමට අවශ්‍ය බව තහවුරු කරන්න ද?'
+    };
 
-    if (!confirm(confirmText)) {
+    if (!confirm(confirmMessages[selectedOption] || confirmMessages.full)) {
       return;
     }
 
@@ -351,22 +353,30 @@ const BackupManager = {
 
       // 2. Perform Clean Reset based on selected mode
       if (selectedOption === 'full') {
-        // Clear all tables
+        // Clear ALL tables including farmers
         const allTables = [
           db.users, db.categories, db.products, db.customers,
-          db.suppliers, db.sales, db.saleItems, db.returns, db.vouchers, db.holdBills,
+          db.suppliers, db.farmers, db.farmerIntakes, db.farmerPayments,
+          db.sales, db.saleItems, db.returns, db.vouchers, db.holdBills,
           db.purchases, db.stockAdjustments, db.expenses,
           db.shifts, db.settings
         ];
         if (db.creditPayments) allTables.push(db.creditPayments);
+        if (db.manualCredits) allTables.push(db.manualCredits);
+        if (db.farmerReturns) allTables.push(db.farmerReturns);
 
-        await db.transaction('rw', allTables, async () => {
+        await db.transaction('rw', allTables.filter(t => t), async () => {
           await db.users.clear();
           await db.categories.clear();
           await db.products.clear();
           await db.customers.clear();
-          if (db.creditPayments) await db.creditPayments.clear();
           await db.suppliers.clear();
+          if (db.farmers) await db.farmers.clear();
+          if (db.farmerIntakes) await db.farmerIntakes.clear();
+          if (db.farmerPayments) await db.farmerPayments.clear();
+          if (db.farmerReturns) await db.farmerReturns.clear();
+          if (db.creditPayments) await db.creditPayments.clear();
+          if (db.manualCredits) await db.manualCredits.clear();
           await db.sales.clear();
           await db.saleItems.clear();
           await db.returns.clear();
@@ -381,21 +391,88 @@ const BackupManager = {
 
         // Re-seed clean starting catalog and zero-transaction state
         await seedDatabaseIfEmpty();
+
+      } else if (selectedOption === 'selective') {
+        // ═══════════════════════════════════════════════════════════════
+        // SELECTIVE DATA RESET: User-chosen specific data categories
+        // ═══════════════════════════════════════════════════════════════
+        const clearProducts    = document.getElementById('selectiveClearProducts')?.checked;
+        const clearCustomers   = document.getElementById('selectiveClearCustomers')?.checked;
+        const clearCredit      = document.getElementById('selectiveClearCredit')?.checked;
+        const clearFarmers     = document.getElementById('selectiveClearFarmers')?.checked;
+        const clearSales       = document.getElementById('selectiveClearSales')?.checked;
+        const clearExpenses    = document.getElementById('selectiveClearExpenses')?.checked;
+
+        const tables = [];
+        if (clearProducts)  tables.push(db.products);
+        if (clearCustomers) tables.push(db.customers);
+        if (clearCredit && db.creditPayments)  tables.push(db.creditPayments);
+        if (clearCredit && db.manualCredits)   tables.push(db.manualCredits);
+        if (clearFarmers && db.farmers)        tables.push(db.farmers);
+        if (clearFarmers && db.farmerIntakes)  tables.push(db.farmerIntakes);
+        if (clearFarmers && db.farmerPayments) tables.push(db.farmerPayments);
+        if (clearFarmers && db.farmerReturns)  tables.push(db.farmerReturns);
+        if (clearSales) {
+          tables.push(db.sales, db.saleItems, db.returns, db.vouchers, db.holdBills, db.stockAdjustments);
+        }
+        if (clearExpenses) tables.push(db.expenses, db.shifts);
+
+        if (tables.length === 0) {
+          alert('කිසිදු දත්ත ප්‍රවර්ගයක් තෝරා නොමැත! (No data category selected)');
+          return;
+        }
+
+        await db.transaction('rw', tables, async () => {
+          if (clearProducts) await db.products.clear();
+          if (clearCustomers) await db.customers.clear();
+          if (clearCredit) {
+            if (db.creditPayments) await db.creditPayments.clear();
+            if (db.manualCredits) await db.manualCredits.clear();
+            // Reset credit balances on existing customers (if not clearing customers)
+            if (!clearCustomers) {
+              const custs = await db.customers.toArray();
+              for (const c of custs) {
+                await db.customers.update(c.id, { creditBalance: 0, points: 0, totalSpent: 0 });
+              }
+            }
+          }
+          if (clearFarmers) {
+            if (db.farmers) await db.farmers.clear();
+            if (db.farmerIntakes) await db.farmerIntakes.clear();
+            if (db.farmerPayments) await db.farmerPayments.clear();
+            if (db.farmerReturns) await db.farmerReturns.clear();
+          }
+          if (clearSales) {
+            await db.sales.clear();
+            await db.saleItems.clear();
+            await db.returns.clear();
+            await db.vouchers.clear();
+            await db.holdBills.clear();
+            await db.stockAdjustments.clear();
+          }
+          if (clearExpenses) {
+            await db.expenses.clear();
+            await db.shifts.clear();
+          }
+        });
+
       } else {
         // Transactions Only Reset: Clears sales, saleItems, returns, expenses, shifts, holdBills, adjustments, creditPayments
         const txnTables = [
           db.sales, db.saleItems, db.returns, db.vouchers, db.holdBills,
-          db.purchases, db.stockAdjustments, db.expenses, db.shifts, db.customers
+          db.purchases, db.stockAdjustments, db.expenses, db.shifts
         ];
         if (db.creditPayments) txnTables.push(db.creditPayments);
+        if (db.manualCredits) txnTables.push(db.manualCredits);
 
-        await db.transaction('rw', txnTables, async () => {
+        await db.transaction('rw', txnTables.filter(t => t), async () => {
           await db.sales.clear();
           await db.saleItems.clear();
           await db.returns.clear();
           await db.vouchers.clear();
           await db.holdBills.clear();
           if (db.creditPayments) await db.creditPayments.clear();
+          if (db.manualCredits) await db.manualCredits.clear();
           await db.purchases.clear();
           await db.stockAdjustments.clear();
           await db.expenses.clear();

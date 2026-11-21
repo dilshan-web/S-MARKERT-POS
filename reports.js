@@ -401,27 +401,82 @@ const ReportsManager = {
         </table>
       `;
     } else if (type === 'customer_credit') {
-      if (titleEl) titleEl.textContent = 'Customer Credit Accounts & Balances Report';
+      if (titleEl) titleEl.textContent = 'Customer Credit Accounts & Balances Report (පාරිභෝගික ණය වාර්තාව)';
+      const customers = [...(data.customers || [])].sort((a, b) => (Number(b.creditBalance) || 0) - (Number(a.creditBalance) || 0));
+      const totalDue = customers.reduce((sum, c) => sum + (Number(c.creditBalance) || 0), 0);
+      const activeCount = customers.filter(c => (Number(c.creditBalance) || 0) > 0).length;
+      const totalSpent = customers.reduce((sum, c) => sum + (Number(c.totalSpent) || 0), 0);
+
       html = `
-        <table class="w-full text-left">
+        <!-- KPI Cards -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 bg-slate-950/60 border-b border-slate-800">
+          <div class="p-3 bg-slate-900 border border-rose-900/40 rounded-xl">
+            <div class="text-[11px] text-slate-400">මුළු හිඟ ණය (Total Credit Due)</div>
+            <div class="text-base font-black text-rose-400 font-mono">${formatLKR(totalDue)}</div>
+          </div>
+          <div class="p-3 bg-slate-900 border border-slate-800 rounded-xl">
+            <div class="text-[11px] text-slate-400">ණය හිමි පාරිභෝගිකයින් (Debtors)</div>
+            <div class="text-base font-black text-amber-400 font-mono">${activeCount} / ${customers.length}</div>
+          </div>
+          <div class="p-3 bg-slate-900 border border-slate-800 rounded-xl">
+            <div class="text-[11px] text-slate-400">මුළු පාරිභෝගික වියදම (Total Spent)</div>
+            <div class="text-base font-black text-emerald-400 font-mono">${formatLKR(totalSpent)}</div>
+          </div>
+          <div class="p-3 bg-slate-900 border border-slate-800 rounded-xl">
+            <div class="text-[11px] text-slate-400">සාමාන්‍ය ණය ශේෂය (Avg Debt)</div>
+            <div class="text-base font-black text-sky-400 font-mono">${formatLKR(activeCount > 0 ? totalDue / activeCount : 0)}</div>
+          </div>
+        </div>
+
+        <table class="w-full text-left text-xs">
           <thead class="bg-slate-850 text-slate-400 uppercase text-[11px] font-bold border-b border-slate-800">
             <tr>
-              <th class="p-3">Customer Name</th>
-              <th class="p-3">Phone</th>
-              <th class="p-3 text-right">Credit Balance</th>
-              <th class="p-3 text-right">Lifetime Spent</th>
+              <th class="p-3">#</th>
+              <th class="p-3">පාරිභෝගික නම (Customer)</th>
+              <th class="p-3">දුරකථන අංකය</th>
+              <th class="p-3 text-right">ණය සීමාව</th>
+              <th class="p-3 text-right">හිඟ ණය ශේෂය (Due)</th>
+              <th class="p-3 text-right">මිලදී ගැනීම් (Spent)</th>
+              <th class="p-3 text-center">තත්වය</th>
+              <th class="p-3 text-right">ක්‍රියාකාරකම්</th>
             </tr>
           </thead>
-          <tbody>
-            ${data.customers.map(c => `
-              <tr class="border-b border-slate-800/80 hover:bg-slate-800/40 text-xs">
-                <td class="p-3 font-bold text-slate-100">${c.name}</td>
-                <td class="p-3 font-mono text-sky-400">${c.phone}</td>
-                <td class="p-3 text-right font-mono font-bold ${(c.creditBalance || 0) > 0 ? 'text-rose-400 font-black' : 'text-emerald-400'}">${formatLKR(c.creditBalance || 0)}</td>
-                <td class="p-3 text-right font-mono text-slate-200">${formatLKR(c.totalSpent || 0)}</td>
+          <tbody class="divide-y divide-slate-800/60">
+            ${customers.map((c, i) => `
+              <tr class="hover:bg-slate-800/40 font-mono">
+                <td class="p-3 text-slate-500 font-sans">${i + 1}</td>
+                <td class="p-3 font-sans font-bold text-slate-100">
+                  <span>${c.name}</span>
+                  ${c.isSchool ? '<span class="ml-1 text-[10px] bg-sky-950 text-sky-300 px-1.5 py-0.2 rounded border border-sky-800">පාසල</span>' : ''}
+                </td>
+                <td class="p-3 text-sky-400">${c.phone || '-'}</td>
+                <td class="p-3 text-right text-slate-400">${formatLKR(c.creditLimit || 0)}</td>
+                <td class="p-3 text-right font-black text-sm ${(c.creditBalance || 0) > 0 ? 'text-rose-400' : 'text-emerald-400'}">
+                  ${formatLKR(c.creditBalance || 0)}
+                </td>
+                <td class="p-3 text-right text-slate-200">${formatLKR(c.totalSpent || 0)}</td>
+                <td class="p-3 text-center font-sans">
+                  ${(c.creditBalance || 0) > 0 ?
+                    '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-950 text-rose-300 border border-rose-800">ණය හිඟයි</span>' :
+                    '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800">ගෙවා ඇත</span>'
+                  }
+                </td>
+                <td class="p-3 text-right font-sans">
+                  <button onclick="CustomerManager.openCustomerStatementModal(${c.id})" class="px-2 py-1 bg-sky-700 hover:bg-sky-600 text-white rounded-lg text-xs font-bold transition cursor-pointer">
+                    📋 ලෙජරය
+                  </button>
+                </td>
               </tr>
             `).join('')}
           </tbody>
+          <tfoot class="bg-slate-900 border-t-2 border-slate-700 text-slate-200 font-mono font-bold">
+            <tr>
+              <td colspan="4" class="p-3 text-right font-sans">මුළු එකතුව (Grand Total):</td>
+              <td class="p-3 text-right text-rose-400 text-sm font-black">${formatLKR(totalDue)}</td>
+              <td class="p-3 text-right text-emerald-400 text-sm">${formatLKR(totalSpent)}</td>
+              <td colspan="2"></td>
+            </tr>
+          </tfoot>
         </table>
       `;
     } else {
@@ -557,6 +612,7 @@ const ReportsManager = {
     const allSaleItems = await db.saleItems.toArray();
     const allExpenses = await db.expenses.toArray();
     const allProducts = await db.products.toArray();
+    const allCustomers = await db.customers.toArray();
 
     const filteredSales = allSales.filter(s => {
       const t = new Date(s.timestamp);
@@ -575,6 +631,12 @@ const ReportsManager = {
     const grossProfit = totalSales - totalCOGS;
     const totalExp = filteredExpenses.reduce((acc, e) => acc + (Number(e.amount) || 0), 0);
     const netProfit = grossProfit - totalExp;
+
+    // Customer Credit KPIs & sorting
+    const totalCreditDue = allCustomers.reduce((acc, c) => acc + (Number(c.creditBalance) || 0), 0);
+    const activeDebtors = allCustomers.filter(c => (Number(c.creditBalance) || 0) > 0);
+    const totalCustSpent = allCustomers.reduce((acc, c) => acc + (Number(c.totalSpent) || 0), 0);
+    const sortedCustomers = [...allCustomers].sort((a, b) => (Number(b.creditBalance) || 0) - (Number(a.creditBalance) || 0));
 
     const reportTypeNameMap = {
       daily_sales: 'DAILY SALES & TRANSACTION REPORT',
@@ -619,28 +681,84 @@ const ReportsManager = {
         </div>
 
         <!-- Summary KPIs Banner -->
-        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 15px;">
-          <div style="background: #f8fafc; border: 1px solid #cbd5e1; padding: 8px; border-radius: 6px;">
-            <div style="font-size: 9px; color: #64748b; font-weight: 600;">TOTAL REVENUE</div>
-            <div style="font-size: 13px; font-weight: 800; color: #0f172a; font-family: monospace;">${formatLKR(totalSales)}</div>
+        ${this.currentReportType === 'customer_credit' ? `
+          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 15px;">
+            <div style="background: #fef2f2; border: 1px solid #fecaca; padding: 8px; border-radius: 6px;">
+              <div style="font-size: 9px; color: #991b1b; font-weight: 700;">TOTAL CREDIT DUE (මුළු හිඟය)</div>
+              <div style="font-size: 13px; font-weight: 800; color: #b91c1c; font-family: monospace;">${formatLKR(totalCreditDue)}</div>
+            </div>
+            <div style="background: #f8fafc; border: 1px solid #cbd5e1; padding: 8px; border-radius: 6px;">
+              <div style="font-size: 9px; color: #64748b; font-weight: 600;">ACTIVE DEBTORS (ණය හිමියන්)</div>
+              <div style="font-size: 13px; font-weight: 800; color: #d97706; font-family: monospace;">${activeDebtors.length} Customers</div>
+            </div>
+            <div style="background: #f8fafc; border: 1px solid #cbd5e1; padding: 8px; border-radius: 6px;">
+              <div style="font-size: 9px; color: #64748b; font-weight: 600;">TOTAL REGISTERED</div>
+              <div style="font-size: 13px; font-weight: 800; color: #0284c7; font-family: monospace;">${allCustomers.length} Records</div>
+            </div>
+            <div style="background: #f8fafc; border: 1px solid #cbd5e1; padding: 8px; border-radius: 6px;">
+              <div style="font-size: 9px; color: #64748b; font-weight: 600;">LIFETIME CUSTOMER SPEND</div>
+              <div style="font-size: 13px; font-weight: 800; color: #16a34a; font-family: monospace;">${formatLKR(totalCustSpent)}</div>
+            </div>
           </div>
-          <div style="background: #f8fafc; border: 1px solid #cbd5e1; padding: 8px; border-radius: 6px;">
-            <div style="font-size: 9px; color: #64748b; font-weight: 600;">GROSS PROFIT</div>
-            <div style="font-size: 13px; font-weight: 800; color: #16a34a; font-family: monospace;">${formatLKR(grossProfit)}</div>
+        ` : `
+          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 15px;">
+            <div style="background: #f8fafc; border: 1px solid #cbd5e1; padding: 8px; border-radius: 6px;">
+              <div style="font-size: 9px; color: #64748b; font-weight: 600;">TOTAL REVENUE</div>
+              <div style="font-size: 13px; font-weight: 800; color: #0f172a; font-family: monospace;">${formatLKR(totalSales)}</div>
+            </div>
+            <div style="background: #f8fafc; border: 1px solid #cbd5e1; padding: 8px; border-radius: 6px;">
+              <div style="font-size: 9px; color: #64748b; font-weight: 600;">GROSS PROFIT</div>
+              <div style="font-size: 13px; font-weight: 800; color: #16a34a; font-family: monospace;">${formatLKR(grossProfit)}</div>
+            </div>
+            <div style="background: #f8fafc; border: 1px solid #cbd5e1; padding: 8px; border-radius: 6px;">
+              <div style="font-size: 9px; color: #64748b; font-weight: 600;">TOTAL EXPENSES</div>
+              <div style="font-size: 13px; font-weight: 800; color: #dc2626; font-family: monospace;">${formatLKR(totalExp)}</div>
+            </div>
+            <div style="background: #f8fafc; border: 1px solid #cbd5e1; padding: 8px; border-radius: 6px;">
+              <div style="font-size: 9px; color: #64748b; font-weight: 600;">NET PROFIT</div>
+              <div style="font-size: 13px; font-weight: 800; color: #0284c7; font-family: monospace;">${formatLKR(netProfit)}</div>
+            </div>
           </div>
-          <div style="background: #f8fafc; border: 1px solid #cbd5e1; padding: 8px; border-radius: 6px;">
-            <div style="font-size: 9px; color: #64748b; font-weight: 600;">TOTAL EXPENSES</div>
-            <div style="font-size: 13px; font-weight: 800; color: #dc2626; font-family: monospace;">${formatLKR(totalExp)}</div>
-          </div>
-          <div style="background: #f8fafc; border: 1px solid #cbd5e1; padding: 8px; border-radius: 6px;">
-            <div style="font-size: 9px; color: #64748b; font-weight: 600;">NET PROFIT</div>
-            <div style="font-size: 13px; font-weight: 800; color: #0284c7; font-family: monospace;">${formatLKR(netProfit)}</div>
-          </div>
-        </div>
+        `}
 
         <!-- Report Table -->
         <table class="a4-table">
-          ${this.currentReportType === 'company_sales' ? `
+          ${this.currentReportType === 'customer_credit' ? `
+            <thead>
+              <tr>
+                <th style="width: 25px; text-align: center;">#</th>
+                <th>Customer Name (පාරිභෝගිකයා)</th>
+                <th>Contact Phone</th>
+                <th style="text-align: right;">Credit Limit</th>
+                <th style="text-align: right;">Credit Due (හිඟ ණය)</th>
+                <th style="text-align: right;">Total Spent</th>
+                <th style="text-align: center;">Status</th>
+                <th style="width: 100px; text-align: center;">Signature</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${sortedCustomers.map((c, idx) => `
+                <tr>
+                  <td style="text-align: center; color: #64748b;">${idx + 1}</td>
+                  <td><strong>${c.name}</strong> ${c.isSchool ? '<span style="font-size: 8px; background: #e0f2fe; color: #0369a1; padding: 1px 4px; border-radius: 4px;">පාසල</span>' : ''}</td>
+                  <td style="font-family: monospace;">${c.phone || '-'}</td>
+                  <td style="text-align: right; font-family: monospace;">${formatLKR(c.creditLimit || 0)}</td>
+                  <td style="text-align: right; font-family: monospace; font-weight: bold; color: ${(c.creditBalance || 0) > 0 ? '#dc2626' : '#16a34a'};">${formatLKR(c.creditBalance || 0)}</td>
+                  <td style="text-align: right; font-family: monospace;">${formatLKR(c.totalSpent || 0)}</td>
+                  <td style="text-align: center; font-size: 8.5px; font-weight: bold; color: ${(c.creditBalance || 0) > 0 ? '#b91c1c' : '#15803d'};">${(c.creditBalance || 0) > 0 ? 'ණය හිඟයි' : 'ගෙවා ඇත'}</td>
+                  <td style="border-bottom: 1px dotted #94a3b8;"></td>
+                </tr>
+              `).join('')}
+            </tbody>
+            <tfoot>
+              <tr style="background: #f1f5f9; font-weight: bold;">
+                <td colspan="4" style="text-align: right;">GRAND TOTAL OUTSTANDING (මුළු හිඟ ණය එකතුව):</td>
+                <td style="text-align: right; font-family: monospace; color: #dc2626; font-size: 11px;">${formatLKR(totalCreditDue)}</td>
+                <td style="text-align: right; font-family: monospace;">${formatLKR(totalCustSpent)}</td>
+                <td colspan="2"></td>
+              </tr>
+            </tfoot>
+          ` : this.currentReportType === 'company_sales' ? `
             <thead>
               <tr>
                 <th>Company / Brand</th>

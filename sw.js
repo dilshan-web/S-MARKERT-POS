@@ -1,9 +1,10 @@
-﻿const CACHE_NAME = 'lankapos-v3.7.0-offline-pwa';
+﻿const CACHE_NAME = 'lankapos-v3.8.1-offline-pwa';
 
 // Core essential static assets
 const CORE_ASSETS = [
   './',
   './index.html',
+  './index_dev.html',
   './manifest.json',
   './styles.css',
   './db.js',
@@ -14,6 +15,7 @@ const CORE_ASSETS = [
   './customers.js',
   './suppliers.js',
   './farmers.js',
+  './schoolcredit.js',
   './dashboard.js',
   './reports.js',
   './expenses.js',

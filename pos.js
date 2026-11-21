@@ -1927,10 +1927,17 @@ ${closeHtml}`);
     const pane = document.getElementById('salesHistoryDetailsPane');
     if (!pane) return;
 
-    const sale = await db.sales.get(saleId);
+    let sale = await db.sales.get(saleId);
+    if (!sale && !isNaN(Number(saleId))) sale = await db.sales.get(Number(saleId));
+    if (!sale) {
+      sale = (await db.sales.toArray()).find(s => s.id == saleId || s.invoiceNo === saleId);
+    }
     if (!sale) return;
 
-    const items = await db.saleItems.where('saleId').equals(saleId).toArray();
+    let items = await db.saleItems.where('saleId').equals(sale.id).toArray();
+    if (!items || items.length === 0) {
+      items = (await db.saleItems.toArray()).filter(it => it.saleId == sale.id || String(it.saleId) === String(sale.id) || (sale.invoiceNo && it.invoiceNo === sale.invoiceNo));
+    }
     const existingReturns = await db.returns.where('invoiceNo').equals(sale.invoiceNo).toArray();
 
     const dateStr = new Date(sale.timestamp).toLocaleString();
@@ -2030,162 +2037,204 @@ ${closeHtml}`);
   // INVOICE DELETION & EDIT / RECALL TO CART
   // ==========================================
   async deleteInvoice(saleId) {
-    const sale = await db.sales.get(saleId);
-    if (!sale) return;
+    let sale = await db.sales.get(saleId);
+    if (!sale && !isNaN(Number(saleId))) sale = await db.sales.get(Number(saleId));
+    if (!sale) {
+      sale = (await db.sales.toArray()).find(s => s.id == saleId || s.invoiceNo === saleId);
+    }
+    if (!sale) {
+      alert('බිල්පත සොයාගත නොහැක! (Invoice not found)');
+      return;
+    }
 
-    AuthManager.requireAdminAuth({
-      actionName: 'Delete Sales Invoice',
-      actionDesc: `Permanently delete invoice ${sale.invoiceNo} and reverse stock/credit`,
-      requiredPerm: 'allowDelete',
-      onAuthorized: async () => {
-        const confirmMsg = `⚠️ අවවාදයයි (Warning):\n\nමෙම බිල (${sale.invoiceNo}) සම්පූර්ණයෙන්ම මකා දමනවාද?\n\n- විකුණන ලද භාණ්ඩ නැවත Inventory Stock එකට එකතු වේ.\n- ණය බිලක් නම් පාරිභෝගිකයාගේ ණය ශේෂයෙන් අඩු වේ.\n\nමෙය ආපසු හැරවිය නොහැක.`;
-        if (!confirm(confirmMsg)) return;
+    const confirmMsg = `⚠️ අවවාදයයි (Warning):\n\nමෙම බිල (${sale.invoiceNo}) සම්පූර්ණයෙන්ම මකා දමනවාද?\n\n- විකුණන ලද භාණ්ඩ නැවත Inventory Stock එකට එකතු වේ.\n- ණය බිලක් නම් පාරිභෝගිකයාගේ ණය ශේෂයෙන් අඩු වේ.\n\nමෙය ආපසු හැරවිය නොහැක.`;
+    if (!confirm(confirmMsg)) return;
 
-        try {
-          // 1. Reverse stock for each item in saleItems
-          const items = await db.saleItems.where('saleId').equals(saleId).toArray();
-          for (const item of items) {
-            if (item.productId) {
-              const prod = await db.products.get(item.productId);
-              if (prod) {
-                const restoredStock = Math.round(((prod.currentStock || 0) + Number(item.qty || 0)) * 100) / 100;
-                await db.products.update(item.productId, { currentStock: restoredStock });
-              }
-            }
-            await db.saleItems.delete(item.id);
+    try {
+      // 1. Reverse stock for each item in saleItems
+      let items = await db.saleItems.where('saleId').equals(sale.id).toArray();
+      if (!items || items.length === 0) {
+        items = (await db.saleItems.toArray()).filter(it => it.saleId == sale.id || String(it.saleId) === String(sale.id) || (sale.invoiceNo && it.invoiceNo === sale.invoiceNo));
+      }
+
+      for (const item of items) {
+        if (item.productId) {
+          const prod = await db.products.get(item.productId);
+          if (prod) {
+            const restoredStock = Math.round(((prod.currentStock || 0) + Number(item.qty || 0)) * 100) / 100;
+            await db.products.update(item.productId, { currentStock: restoredStock });
           }
+        }
+        try { await db.saleItems.delete(item.id); } catch (e) {}
+      }
 
-          // 2. Reverse customer credit if this was a credit sale
-          if (sale.customerId && (sale.paymentMethod === 'credit' || Number(sale.creditAmount) > 0)) {
-            const cust = await db.customers.get(sale.customerId);
-            if (cust) {
-              const reversedDue = Number(sale.creditAmount || sale.grandTotal || 0);
-              const newBal = Math.max(0, Math.round(((cust.creditBalance || 0) - reversedDue) * 100) / 100);
-              await db.customers.update(cust.id, { creditBalance: newBal });
-            }
-          }
-
-          // 3. Delete returns associated with this invoice
-          const retItems = await db.returns.where('invoiceNo').equals(sale.invoiceNo).toArray();
-          for (const r of retItems) {
-            await db.returns.delete(r.id);
-          }
-
-          // 4. Delete the sale record itself
-          await db.sales.delete(saleId);
-
-          // 5. Audit log
-          try {
-            await db.stockAdjustments.add({
-              date: new Date().toISOString(),
-              productId: 0,
-              productName: `Invoice Deleted: ${sale.invoiceNo}`,
-              type: 'in',
-              qty: 0,
-              reason: `Mistaken Invoice ${sale.invoiceNo} deleted by ${AuthManager.currentUser?.username || 'admin'}`,
-              user: AuthManager.currentUser?.username || 'admin'
-            });
-          } catch (e) {}
-
-          if (window.SoundManager) SoundManager.playSuccessChime();
-          alert(`බිල (${sale.invoiceNo}) සාර්ථකව මකා දමා stock යාවත්කාලීන කරන ලදී! (Invoice deleted and stock restored)`);
-
-          await this.renderSalesHistory();
-          const detailsPane = document.getElementById('salesHistoryDetailsPane');
-          if (detailsPane) {
-            detailsPane.innerHTML = `<div class="flex-1 flex items-center justify-center text-xs text-slate-500 text-center p-6">Invoice ${sale.invoiceNo} deleted successfully.</div>`;
-          }
-          await this.renderProductGrid();
-        } catch (err) {
-          console.error('Error deleting invoice:', err);
-          alert('Error deleting invoice: ' + err.message);
+      // 2. Reverse customer credit if this was a credit sale or customer attached
+      if (sale.customerId) {
+        let cust = await db.customers.get(sale.customerId);
+        if (!cust && !isNaN(Number(sale.customerId))) cust = await db.customers.get(Number(sale.customerId));
+        if (cust) {
+          const reversedDue = Number(sale.creditAmount || (sale.paymentMethod === 'credit' ? sale.grandTotal : 0) || 0);
+          const newBal = Math.max(0, Math.round(((cust.creditBalance || 0) - reversedDue) * 100) / 100);
+          const newSpent = Math.max(0, Math.round(((cust.totalSpent || 0) - (Number(sale.grandTotal) || 0)) * 100) / 100);
+          await db.customers.update(cust.id, { creditBalance: newBal, totalSpent: newSpent });
         }
       }
-    });
+
+      // 3. Delete returns associated with this invoice
+      const retItems = await db.returns.where('invoiceNo').equals(sale.invoiceNo).toArray();
+      for (const r of retItems) {
+        try { await db.returns.delete(r.id); } catch (e) {}
+      }
+
+      // 4. Delete the sale record itself
+      await db.sales.delete(sale.id);
+      try { if (sale.id !== saleId) await db.sales.delete(saleId); } catch (e) {}
+      try { await db.sales.delete(Number(saleId)); } catch (e) {}
+
+      // 5. Audit log
+      try {
+        await db.stockAdjustments.add({
+          date: new Date().toISOString(),
+          productId: 0,
+          productName: `Invoice Deleted: ${sale.invoiceNo}`,
+          type: 'in',
+          qty: 0,
+          reason: `Mistaken Invoice ${sale.invoiceNo} deleted by ${AuthManager.currentUser?.username || 'admin'}`,
+          user: AuthManager.currentUser?.username || 'admin'
+        });
+      } catch (e) {}
+
+      if (window.SoundManager) SoundManager.playSuccessChime();
+      alert(`බිල (${sale.invoiceNo}) සාර්ථකව මකා දමා stock යාවත්කාලීන කරන ලදී! (Invoice deleted and stock restored)`);
+
+      await this.renderSalesHistory();
+      const detailsPane = document.getElementById('salesHistoryDetailsPane');
+      if (detailsPane) {
+        detailsPane.innerHTML = `<div class="flex-1 flex items-center justify-center text-xs text-slate-500 text-center p-6">Invoice ${sale.invoiceNo} deleted successfully.</div>`;
+      }
+      await this.renderProductGrid();
+      if (window.CustomerManager) {
+        CustomerManager.renderCustomerTable();
+        CustomerManager.renderCreditTab();
+      }
+      if (window.DashboardManager) {
+        DashboardManager.renderDashboard();
+      }
+    } catch (err) {
+      console.error('Error deleting invoice:', err);
+      alert('Error deleting invoice: ' + err.message);
+    }
   },
 
   async editInvoice(saleId) {
-    const sale = await db.sales.get(saleId);
-    if (!sale) return;
+    let sale = await db.sales.get(saleId);
+    if (!sale && !isNaN(Number(saleId))) sale = await db.sales.get(Number(saleId));
+    if (!sale) {
+      sale = (await db.sales.toArray()).find(s => s.id == saleId || s.invoiceNo === saleId);
+    }
+    if (!sale) {
+      alert('බිල්පත සොයාගත නොහැක! (Invoice not found)');
+      return;
+    }
 
-    AuthManager.requireAdminAuth({
-      actionName: 'Edit / Recall Sales Invoice',
-      actionDesc: `Load invoice ${sale.invoiceNo} into active POS cart for corrections`,
-      requiredPerm: 'allowPriceEdit',
-      onAuthorized: async () => {
-        const ask = confirm(`බිල (${sale.invoiceNo}) සංස්කරණය සඳහා නැවත POS Billing Cart එකට ගන්නද?\n\n[OK] ක්ලික් කළහොත්:\n1. මෙම පැරණි බිලෙහි Stock & Credit ආපසු හැරවේ.\n2. සියලුම භාණ්ඩ POS තිරයට පැමිණෙන අතර, ඔබට අවශ්‍ය පරිදි අඩු/වැඩි කර අලුතින් නිවැරදි බිල නිකුත් කළ හැක.`);
-        if (!ask) return;
+    const ask = confirm(`බිල (${sale.invoiceNo}) සංස්කරණය සඳහා නැවත POS Billing Cart එකට ගන්නද?\n\n[OK] ක්ලික් කළහොත්:\n1. මෙම පැරණි බිලෙහි Stock & Credit ආපසු හැරවේ.\n2. සියලුම භාණ්ඩ POS තිරයට පැමිණෙන අතර, ඔබට අවශ්‍ය පරිදි අඩු/වැඩි කර අලුතින් නිවැරදි බිල නිකුත් කළ හැක.`);
+    if (!ask) return;
 
-        try {
-          const items = await db.saleItems.where('saleId').equals(saleId).toArray();
+    try {
+      let items = await db.saleItems.where('saleId').equals(sale.id).toArray();
+      if (!items || items.length === 0) {
+        items = (await db.saleItems.toArray()).filter(it => it.saleId == sale.id || String(it.saleId) === String(sale.id) || (sale.invoiceNo && it.invoiceNo === sale.invoiceNo));
+      }
 
-          // 1. Reverse stock
-          for (const item of items) {
-            if (item.productId) {
-              const prod = await db.products.get(item.productId);
-              if (prod) {
-                const restoredStock = Math.round(((prod.currentStock || 0) + Number(item.qty || 0)) * 100) / 100;
-                await db.products.update(item.productId, { currentStock: restoredStock });
-              }
-            }
-            await db.saleItems.delete(item.id);
+      // 1. Reverse stock
+      for (const item of items) {
+        if (item.productId) {
+          const prod = await db.products.get(item.productId);
+          if (prod) {
+            const restoredStock = Math.round(((prod.currentStock || 0) + Number(item.qty || 0)) * 100) / 100;
+            await db.products.update(item.productId, { currentStock: restoredStock });
           }
+        }
+        try { await db.saleItems.delete(item.id); } catch (e) {}
+      }
 
-          // 2. Reverse customer credit if credit
-          if (sale.customerId && (sale.paymentMethod === 'credit' || Number(sale.creditAmount) > 0)) {
-            const cust = await db.customers.get(sale.customerId);
-            if (cust) {
-              const reversedDue = Number(sale.creditAmount || sale.grandTotal || 0);
-              const newBal = Math.max(0, Math.round(((cust.creditBalance || 0) - reversedDue) * 100) / 100);
-              await db.customers.update(cust.id, { creditBalance: newBal });
-            }
-          }
-
-          // 3. Delete old sale record
-          await db.sales.delete(saleId);
-
-          // 4. Load items into Cart
-          this.cart = items.map(it => ({
-            productId: it.productId,
-            sku: it.sku || '',
-            name: it.productName,
-            nameSi: it.nameSi || it.productName,
-            unit: it.unit || 'pcs',
-            price: Number(it.price) || 0,
-            retailPrice: Number(it.retailPrice || it.price) || 0,
-            wholesalePrice: Number(it.wholesalePrice || it.price) || 0,
-            markedPrice: Number(it.markedPrice) || 0,
-            qty: Number(it.qty) || 1,
-            discountType: it.discountType || 'none',
-            discountValue: Number(it.discountValue) || 0,
-            lineDiscount: Number(it.lineDiscount) || 0,
-            total: Number(it.total) || (Number(it.price) * Number(it.qty)),
-            isWholesale: !!it.isWholesale
-          }));
-
-          if (sale.customerId) {
-            this.selectedCustomer = await db.customers.get(sale.customerId);
-          } else {
-            this.selectedCustomer = null;
-          }
-
-          document.getElementById('salesHistoryModal')?.classList.add('hidden');
-          if (window.App) App.switchTab('pos');
-          this.renderCart();
-          this.updateCustomerSelectionUI();
-          SoundManager.playSuccessChime();
-          alert(`බිල (${sale.invoiceNo}) POS Cart එකට ගන්නා ලදී. දැන් අවශ්‍ය සංශෝධන සිදුකර බිල නැවත ලබා දෙන්න.`);
-        } catch (err) {
-          console.error('Error recalling invoice to cart:', err);
-          alert('Error: ' + err.message);
+      // 2. Reverse customer credit if credit or attached
+      if (sale.customerId) {
+        let cust = await db.customers.get(sale.customerId);
+        if (!cust && !isNaN(Number(sale.customerId))) cust = await db.customers.get(Number(sale.customerId));
+        if (cust) {
+          const reversedDue = Number(sale.creditAmount || (sale.paymentMethod === 'credit' ? sale.grandTotal : 0) || 0);
+          const newBal = Math.max(0, Math.round(((cust.creditBalance || 0) - reversedDue) * 100) / 100);
+          const newSpent = Math.max(0, Math.round(((cust.totalSpent || 0) - (Number(sale.grandTotal) || 0)) * 100) / 100);
+          await db.customers.update(cust.id, { creditBalance: newBal, totalSpent: newSpent });
         }
       }
-    });
+
+      // 3. Delete returns associated with this invoice
+      const retItems = await db.returns.where('invoiceNo').equals(sale.invoiceNo).toArray();
+      for (const r of retItems) {
+        try { await db.returns.delete(r.id); } catch (e) {}
+      }
+
+      // 4. Delete old sale record
+      await db.sales.delete(sale.id);
+      try { if (sale.id !== saleId) await db.sales.delete(saleId); } catch (e) {}
+      try { await db.sales.delete(Number(saleId)); } catch (e) {}
+
+      // 5. Load items into Cart
+      this.cart = items.map(it => ({
+        productId: it.productId,
+        sku: it.sku || '',
+        name: it.productName,
+        nameSi: it.nameSi || it.productName,
+        unit: it.unit || 'pcs',
+        price: Number(it.price) || 0,
+        retailPrice: Number(it.retailPrice || it.price) || 0,
+        wholesalePrice: Number(it.wholesalePrice || it.price) || 0,
+        markedPrice: Number(it.markedPrice) || 0,
+        qty: Number(it.qty) || 1,
+        discountType: it.discountType || 'none',
+        discountValue: Number(it.discountValue) || 0,
+        lineDiscount: Number(it.lineDiscount) || 0,
+        total: Number(it.total) || (Number(it.price) * Number(it.qty)),
+        isWholesale: !!it.isWholesale
+      }));
+
+      if (sale.customerId) {
+        let cust = await db.customers.get(sale.customerId);
+        if (!cust && !isNaN(Number(sale.customerId))) cust = await db.customers.get(Number(sale.customerId));
+        this.selectedCustomer = cust || {
+          id: sale.customerId,
+          name: sale.customerName,
+          phone: sale.customerPhone || ''
+        };
+      } else {
+        this.selectedCustomer = null;
+      }
+
+      document.getElementById('salesHistoryModal')?.classList.add('hidden');
+      if (window.App) App.switchTab('pos');
+      this.renderCart();
+      this.updateCustomerSelectionUI();
+      if (window.SoundManager) SoundManager.playSuccessChime();
+      alert(`බිල (${sale.invoiceNo}) POS Cart එකට ගන්නා ලදී. දැන් අවශ්‍ය සංශෝධන සිදුකර බිල නැවත ලබා දෙන්න.`);
+    } catch (err) {
+      console.error('Error recalling invoice to cart:', err);
+      alert('Error: ' + err.message);
+    }
   },
 
   async promptReturnItem(saleId, itemId) {
-    const item = await db.saleItems.get(itemId);
-    const sale = await db.sales.get(saleId);
+    let sale = await db.sales.get(saleId);
+    if (!sale && !isNaN(Number(saleId))) sale = await db.sales.get(Number(saleId));
+    if (!sale) {
+      sale = (await db.sales.toArray()).find(s => s.id == saleId || s.invoiceNo === saleId);
+    }
+    if (!sale) return;
+
+    let item = await db.saleItems.get(itemId);
+    if (!item && !isNaN(Number(itemId))) item = await db.saleItems.get(Number(itemId));
+    if (!item) return;
     if (!item || !sale) return;
 
     AuthManager.requireAdminAuth({
@@ -2262,10 +2311,17 @@ ${closeHtml}`);
   },
 
   async reprintPastReceipt(saleId) {
-    const sale = await db.sales.get(saleId);
+    let sale = await db.sales.get(saleId);
+    if (!sale && !isNaN(Number(saleId))) sale = await db.sales.get(Number(saleId));
+    if (!sale) {
+      sale = (await db.sales.toArray()).find(s => s.id == saleId || s.invoiceNo === saleId);
+    }
     if (!sale) return;
 
-    const items = await db.saleItems.where('saleId').equals(saleId).toArray();
+    let items = await db.saleItems.where('saleId').equals(sale.id).toArray();
+    if (!items || items.length === 0) {
+      items = (await db.saleItems.toArray()).filter(it => it.saleId == sale.id || String(it.saleId) === String(sale.id) || (sale.invoiceNo && it.invoiceNo === sale.invoiceNo));
+    }
     const fullSale = {
       ...sale,
       items: items.map(it => ({

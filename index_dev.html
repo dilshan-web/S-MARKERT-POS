@@ -23,7 +23,7 @@
     if ('caches' in window) {
       caches.keys().then(function(names) {
         for (var n of names) {
-          if (n !== 'lankapos-v3.7.0-offline-pwa') {
+          if (n !== 'lankapos-v3.8.0-offline-pwa') {
             caches.delete(n);
           }
         }
@@ -830,6 +830,13 @@ input[type=number] {
       }
       return false;
     };
+    window.quickFillLogin = function(u, p) {
+      var uInput = document.getElementById('loginUsernameInput');
+      var pInput = document.getElementById('loginPasswordInput');
+      if (uInput) uInput.value = u;
+      if (pInput) pInput.value = p;
+      if (window.handleLoginFormSubmit) window.handleLoginFormSubmit();
+    };
   </script>
 
   <!-- =========================================================================
@@ -855,7 +862,7 @@ input[type=number] {
         <div>
           <label data-i18n="usernameLabel" class="block text-xs font-bold text-slate-300 mb-1">Username / PIN</label>
           <div class="relative">
-            <input id="loginUsernameInput" type="text" data-i18n-placeholder="usernamePlaceholder" placeholder="Username / PIN"
+            <input id="loginUsernameInput" type="text" data-i18n-placeholder="usernamePlaceholder" placeholder="Username / PIN" style="color: #ffffff !important; -webkit-text-fill-color: #ffffff !important; background-color: #020617 !important; font-size: 13px !important;" style="color: #ffffff !important; -webkit-text-fill-color: #ffffff !important; background-color: #020617 !important; font-size: 13px !important;" style="color: #ffffff !important; -webkit-text-fill-color: #ffffff !important; background-color: #020617 !important; font-size: 13px !important;"
                    class="w-full pl-9 pr-3 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-sky-500 font-medium" />
             <svg class="w-4 h-4 absolute left-3 top-3 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
           </div>
@@ -864,7 +871,7 @@ input[type=number] {
         <div>
           <label data-i18n="passwordLabel" class="block text-xs font-bold text-slate-300 mb-1">Password</label>
           <div class="relative">
-            <input id="loginPasswordInput" type="password" placeholder="••••••••"
+            <input id="loginPasswordInput" type="password" placeholder="••••••••" style="color: #ffffff !important; -webkit-text-fill-color: #ffffff !important; background-color: #020617 !important; font-size: 13px !important;" style="color: #ffffff !important; -webkit-text-fill-color: #ffffff !important; background-color: #020617 !important; font-size: 13px !important;" style="color: #ffffff !important; -webkit-text-fill-color: #ffffff !important; background-color: #020617 !important; font-size: 13px !important;"
                    class="w-full pl-9 pr-10 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-sky-500 font-mono font-bold" />
             <svg class="w-4 h-4 absolute left-3 top-3 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
             <button type="button" onclick="togglePasswordVisibility()" class="absolute right-3 top-3 text-slate-400 hover:text-slate-200">
@@ -877,6 +884,8 @@ input[type=number] {
           <span data-i18n="loginBtn">LOGIN</span>
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
         </button>
+
+
       </form>
 
     </div>
@@ -1084,6 +1093,12 @@ input[type=number] {
           <button onclick="App.switchTab('pos')" data-tab="pos" class="nav-tab-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold transition bg-sky-600 text-white shadow-md shadow-sky-600/30 cursor-pointer">
             <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
             <span class="hidden md:inline" data-i18n="posTerminal">POS Terminal</span>
+          </button>
+
+          <!-- Sales Invoices & History Nav Button -->
+          <button onclick="POSManager.openSalesHistoryModal()" class="nav-tab-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold transition text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer" title="නිකුත් කළ සියලුම බිල්පත් බලන්න (View All Past Invoices)">
+            <svg class="w-5 h-5 shrink-0 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            <span class="hidden md:inline">🧾 බිල්පත් (Invoices)</span>
           </button>
 
           <!-- Inventory & Stock -->
@@ -1526,8 +1541,8 @@ input[type=number] {
                   <button onclick="POSManager.openRecallBillsModal()" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[11px] sm:text-xs font-semibold transition flex items-center gap-1">
                     <span>▶️</span> <span>Recall</span><span class="hidden md:inline"> (F9)</span> <span id="holdBillsCountBadge" class="hidden"></span>
                   </button>
-                  <button onclick="POSManager.openSalesHistoryModal()" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[11px] sm:text-xs font-semibold transition flex items-center gap-1">
-                    <span>🔄</span> <span>Returns</span><span class="hidden md:inline"> (F7)</span>
+                  <button onclick="POSManager.openSalesHistoryModal()" class="px-2.5 py-1 bg-sky-950 hover:bg-sky-900 border border-sky-700/80 text-sky-300 rounded-lg text-[11px] sm:text-xs font-bold transition flex items-center gap-1 shadow-sm" title="නිකුත් කළ සියලුම බිල්පත් බැලීම (View All Invoices [F7])">
+                    <span>🧾</span> <span>බිල්පත් (Invoices)</span><span class="hidden md:inline"> (F7)</span>
                   </button>
                 </div>
                 <button onclick="POSManager.clearCart()" data-i18n="clearCart" class="text-xs text-rose-400 hover:text-rose-300 px-2 py-1 font-bold shrink-0" title="Clear All Items">
@@ -2701,7 +2716,7 @@ input[type=number] {
                 <span>🥕</span> <span>දෙමාපියන් එළවළු ණයට ගැනීම (School Meal Credit)</span>
               </button>
               <button onclick="SchoolCreditManager.openAddSchoolModal()" class="px-3.5 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer">
-                <span>➕</span> <span>Add School</span>
+                <span>➕</span> <span>පාසල් පාරිභෝගිකයෙකු එක් කරන්න (Add Customer)</span>
               </button>
             </div>
           </div>
@@ -3236,6 +3251,12 @@ input[type=number] {
         <button onclick="CustomerManager.openAddCustomerModal()" data-i18n="newCustomerShort" class="px-3 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold transition">
           + New
         </button>
+      </div>
+
+            <!-- Quick Filter Pills: All vs School Customers -->
+      <div class="flex items-center gap-1.5 pb-2 shrink-0 text-xs">
+        <button type="button" id="posCustFilter_all" onclick="CustomerManager.openCustomerSelectModal('all')" class="px-3 py-1 bg-sky-600 text-white rounded-lg text-xs font-bold transition shadow-sm cursor-pointer">සියල්ල (All)</button>
+        <button type="button" id="posCustFilter_school" onclick="CustomerManager.openCustomerSelectModal('school')" class="px-3 py-1 bg-slate-800 text-slate-300 hover:text-white rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer"><span>🏫</span> <span>පාසල් ණය (School Meals)</span></button>
       </div>
 
       <div id="posCustomerSelectList" class="flex-1 overflow-y-auto space-y-2"></div>
@@ -4279,7 +4300,7 @@ input[type=number] {
 
   <!-- Modal 17: Safe Database Reset & Auto-Backup Modal -->
   <div id="resetSystemModal" class="app-modal fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 hidden">
-    <div class="w-full max-w-lg bg-slate-900 border border-rose-800/80 rounded-3xl p-6 shadow-2xl shadow-rose-950/50 animate-fade-in">
+    <div class="w-full max-w-lg bg-slate-900 border border-rose-800/80 rounded-3xl p-6 shadow-2xl shadow-rose-950/50 animate-fade-in max-h-[90vh] overflow-y-auto">
       <div class="flex items-center justify-between pb-3 border-b border-slate-800">
         <div class="flex items-center gap-2.5">
           <div class="w-10 h-10 rounded-2xl bg-rose-950 border border-rose-700 flex items-center justify-center text-xl">⚠️</div>
@@ -4305,28 +4326,94 @@ input[type=number] {
 
         <!-- Option A: Full Clean Supermarket Reset -->
         <label class="p-3.5 bg-slate-950 border border-slate-800 hover:border-rose-600 rounded-2xl flex items-start gap-3 cursor-pointer transition">
-          <input type="radio" name="resetOptionChoice" value="full" checked class="mt-1 text-rose-600 focus:ring-0 bg-slate-900 border-slate-700" />
+          <input type="radio" name="resetOptionChoice" value="full" checked class="mt-1 text-rose-600 focus:ring-0 bg-slate-900 border-slate-700" onchange="document.getElementById('selectiveResetOptions').classList.add('hidden')" />
           <div class="flex-1">
             <div class="font-bold text-sm text-slate-100 flex items-center justify-between">
               <span>🔄 Full Supermarket Reset (සම්පූර්ණ පද්ධතියම Restart)</span>
               <span class="text-[10px] px-2 py-0.5 rounded bg-rose-950 text-rose-300 border border-rose-800 font-bold uppercase">All Clean</span>
             </div>
-            <p class="text-[11px] text-slate-400 mt-1">දැනට සිදුකර ඇති සියලුම Sales, Reports, Expenses, Shifts සහ අලුතින් එක්කළ Products සම්පූර්ණයෙන්ම Reset වී Default Baseline Supermarket Catalogue එක සමඟ පද්ධතිය අලුතින්ම Restart වේ.</p>
+            <p class="text-[11px] text-slate-400 mt-1">Products, Customers, Farmers, Sales, Reports, Settings - සියල්ල Delete වේ. Default Supermarket Catalogue එක සමඟ නැවත Restart වේ.</p>
           </div>
         </label>
 
         <!-- Option B: Transactions Only Reset -->
         <label class="p-3.5 bg-slate-950 border border-slate-800 hover:border-amber-600 rounded-2xl flex items-start gap-3 cursor-pointer transition">
-          <input type="radio" name="resetOptionChoice" value="transactions_only" class="mt-1 text-amber-600 focus:ring-0 bg-slate-900 border-slate-700" />
+          <input type="radio" name="resetOptionChoice" value="transactions_only" class="mt-1 text-amber-600 focus:ring-0 bg-slate-900 border-slate-700" onchange="document.getElementById('selectiveResetOptions').classList.add('hidden')" />
           <div class="flex-1">
             <div class="font-bold text-sm text-slate-100 flex items-center justify-between">
               <span>🧹 Reset Sales & Reports Only (විකුණුම් සහ වාර්තා පමණක්)</span>
               <span class="text-[10px] px-2 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800 font-bold uppercase">Keep Items</span>
             </div>
-            <p class="text-[11px] text-slate-400 mt-1">ඔබ ඇතුළත් කළ Products, Barcodes, Categories, Suppliers සහ Customers එලෙසම තබාගනිමින්, සිදුකළ සියලුම Sales History, Invoices, Expenses, Shifts සහ Dashboard වාර්තා 0 දක්වා Reset කරයි.</p>
+            <p class="text-[11px] text-slate-400 mt-1">Products, Farmers, Customers ඉතිරිව, Sales History, Invoices, Expenses, Shifts, Credit Balances 0 Reset.</p>
           </div>
         </label>
+
+        <!-- Option C: NEW - Selective Data Delete -->
+        <label class="p-3.5 bg-slate-950 border border-slate-800 hover:border-sky-600 rounded-2xl flex items-start gap-3 cursor-pointer transition">
+          <input type="radio" name="resetOptionChoice" value="selective" class="mt-1 text-sky-500 focus:ring-0 bg-slate-900 border-slate-700" onchange="document.getElementById('selectiveResetOptions').classList.remove('hidden')" />
+          <div class="flex-1">
+            <div class="font-bold text-sm text-slate-100 flex items-center justify-between">
+              <span>🎯 Selective Data Delete (තෝරාගත් දත්ත Delete කිරීම)</span>
+              <span class="text-[10px] px-2 py-0.5 rounded bg-sky-950 text-sky-300 border border-sky-800 font-bold uppercase">Custom</span>
+            </div>
+            <p class="text-[11px] text-slate-400 mt-1">Products, Customers, Credit Balances, Farmers - ඔබට අවශ්‍ය දත්ත ප්‍රවර්ග පමණක් Delete කරන්න.</p>
+          </div>
+        </label>
+
+        <!-- Selective Checkboxes (shown only when selective is chosen) -->
+        <div id="selectiveResetOptions" class="hidden p-4 bg-slate-950 border border-sky-800/60 rounded-2xl space-y-2.5">
+          <div class="text-sky-300 font-bold text-xs mb-2">🗂️ Delete කිරීමට ඇති දත්ත ප්‍රවර්ග (Select data to DELETE):</div>
+
+          <label class="flex items-center gap-3 cursor-pointer p-2 rounded-xl hover:bg-slate-900">
+            <input type="checkbox" id="selectiveClearProducts" class="w-4 h-4 rounded text-rose-600 bg-slate-800 border-slate-600 focus:ring-0">
+            <div>
+              <div class="font-bold text-slate-100">📦 Products / Inventory (නිෂ්පාදන)</div>
+              <div class="text-[11px] text-slate-400">සියලුම products, barcodes, stock quantities, categories</div>
+            </div>
+          </label>
+
+          <label class="flex items-center gap-3 cursor-pointer p-2 rounded-xl hover:bg-slate-900">
+            <input type="checkbox" id="selectiveClearCustomers" class="w-4 h-4 rounded text-rose-600 bg-slate-800 border-slate-600 focus:ring-0">
+            <div>
+              <div class="font-bold text-slate-100">👥 Customers (පාරිභෝගිකයන්) + School Accounts</div>
+              <div class="text-[11px] text-slate-400">සාමාන්‍ය customers, school meal customers, credit accounts</div>
+            </div>
+          </label>
+
+          <label class="flex items-center gap-3 cursor-pointer p-2 rounded-xl hover:bg-slate-900">
+            <input type="checkbox" id="selectiveClearCredit" class="w-4 h-4 rounded text-rose-600 bg-slate-800 border-slate-600 focus:ring-0">
+            <div>
+              <div class="font-bold text-slate-100">💳 Credit Balances (ණය ශේෂ) - Customers ඉතිරිව</div>
+              <div class="text-[11px] text-slate-400">Credit balances, payment records, manual credits - 0 Reset (Customers Delete නොවේ)</div>
+            </div>
+          </label>
+
+          <label class="flex items-center gap-3 cursor-pointer p-2 rounded-xl hover:bg-slate-900">
+            <input type="checkbox" id="selectiveClearFarmers" class="w-4 h-4 rounded text-rose-600 bg-slate-800 border-slate-600 focus:ring-0">
+            <div>
+              <div class="font-bold text-slate-100">🌾 Farmers (ගොවීන්) + Intake History</div>
+              <div class="text-[11px] text-slate-400">ගොවි ලේඛන, vegetable intakes, payments, balance history</div>
+            </div>
+          </label>
+
+          <label class="flex items-center gap-3 cursor-pointer p-2 rounded-xl hover:bg-slate-900">
+            <input type="checkbox" id="selectiveClearSales" class="w-4 h-4 rounded text-rose-600 bg-slate-800 border-slate-600 focus:ring-0">
+            <div>
+              <div class="font-bold text-slate-100">🧾 Sales / Invoices / Returns (විකුණුම් ඉතිහාසය)</div>
+              <div class="text-[11px] text-slate-400">Sales records, invoices, returns, hold bills, stock adjustments</div>
+            </div>
+          </label>
+
+          <label class="flex items-center gap-3 cursor-pointer p-2 rounded-xl hover:bg-slate-900">
+            <input type="checkbox" id="selectiveClearExpenses" class="w-4 h-4 rounded text-rose-600 bg-slate-800 border-slate-600 focus:ring-0">
+            <div>
+              <div class="font-bold text-slate-100">💸 Expenses & Shifts (වියදම් සහ Shifts)</div>
+              <div class="text-[11px] text-slate-400">Expense records, cashier shift sessions</div>
+            </div>
+          </label>
+        </div>
       </div>
+
       <div class="flex gap-2">
         <button onclick="document.getElementById('resetSystemModal').classList.add('hidden')" class="w-1/3 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition">
           Cancel (අවලංගු කරන්න)
@@ -4953,41 +5040,55 @@ input[type=number] {
   <!-- ================================================================
        MODAL: Add / Edit School Customer (පාසල් ගිනුම)
        ================================================================ -->
-  <div id="schoolCustomerModal" class="app-modal fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 hidden">
+    <div id="schoolCustomerModal" class="app-modal fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 hidden">
     <div class="w-full max-w-sm bg-slate-900 border border-sky-700/60 rounded-3xl p-6 shadow-2xl">
       <div class="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
-        <h3 id="schoolCustomerModalTitle" class="text-sm font-bold text-slate-100 flex items-center gap-1.5"><span>🏫</span> <span>Add School</span></h3>
+        <h3 id="schoolCustomerModalTitle" class="text-sm font-bold text-slate-100 flex items-center gap-1.5">
+          <span>🏫</span> <span>පාසල් පාරිභෝගිකයෙකු එක් කිරීම (Add School Customer)</span>
+        </h3>
         <button onclick="document.getElementById('schoolCustomerModal').classList.add('hidden')" class="text-slate-400 hover:text-white text-lg">&times;</button>
       </div>
       <form id="schoolCustomerForm" onsubmit="SchoolCreditManager.saveSchoolCustomer(event); return false;" class="space-y-3 text-xs">
         <input type="hidden" id="schoolCustIdInput" value="">
         <div>
-          <label class="block text-slate-400 mb-1">School Name *</label>
-          <input type="text" id="schoolCustNameInput" required class="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-slate-200 outline-none focus:border-sky-500" placeholder="e.g. Richmond College">
+          <label class="block text-slate-300 font-bold mb-1">පාරිභෝගිකයාගේ / බාරකරුගේ නම (Customer / Guardian Name) *</label>
+          <input type="text" id="schoolCustNameInput" required class="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-slate-100 font-bold outline-none focus:border-sky-500" placeholder="උදා: කමලා පෙරේරා / සුනිල් ශාන්ත">
         </div>
         <div>
-          <label class="block text-slate-400 mb-1">School Code (SKY Code) *</label>
-          <input type="text" id="schoolCustCodeInput" required class="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-slate-200 outline-none focus:border-sky-500 font-mono uppercase" placeholder="e.g. SKY001">
+          <label class="block text-slate-300 font-bold mb-1">අදාළ පාසලේ නම (School / Meal Program) *</label>
+          <input type="text" id="schoolCustSchoolNameInput" required class="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-slate-100 outline-none focus:border-sky-500" placeholder="උදා: රිච්මන්ඩ් විද්‍යාලය - දිවා ආහාර වැඩසටහන">
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="block text-slate-400 mb-1">කේතය (Code)</label>
+            <input type="text" id="schoolCustCodeInput" required class="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-slate-200 outline-none focus:border-sky-500 font-mono uppercase" placeholder="SCH-001">
+          </div>
+          <div>
+            <label class="block text-slate-400 mb-1">දුරකථන අංකය</label>
+            <input type="tel" id="schoolCustPhoneInput" class="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-slate-200 outline-none focus:border-sky-500" placeholder="07X XXXXXXX">
+          </div>
         </div>
         <div>
-          <label class="block text-slate-400 mb-1">Phone</label>
-          <input type="tel" id="schoolCustPhoneInput" class="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-slate-200 outline-none focus:border-sky-500" placeholder="07X XXXXXXX">
-        </div>
-        <div>
-          <label class="block text-slate-400 mb-1">Address</label>
+          <label class="block text-slate-400 mb-1">ලිපිනය / විස්තර (Address)</label>
           <input type="text" id="schoolCustAddressInput" class="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-slate-200 outline-none focus:border-sky-500">
         </div>
-        <div>
-          <label class="block text-slate-400 mb-1">Credit Limit (Rs.)</label>
-          <input type="number" id="schoolCustLimitInput" min="0" step="1" class="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-slate-200 outline-none focus:border-sky-500" placeholder="0 = no limit">
-        </div>
-        <div>
-          <label class="block text-slate-400 mb-1">Opening Balance (Rs.)</label>
-          <input type="number" id="schoolCustOpeningBalInput" min="0" step="0.01" class="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-slate-200 outline-none focus:border-sky-500" placeholder="0.00">
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="block text-slate-400 mb-1">ණය සීමාව (Credit Limit Rs.)</label>
+            <input type="number" id="schoolCustLimitInput" min="0" step="1" class="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-slate-200 outline-none focus:border-sky-500 font-mono" placeholder="50000">
+          </div>
+          <div>
+            <label class="block text-slate-400 mb-1">ආරම්භක ණය (Opening Bal Rs.)</label>
+            <input type="number" id="schoolCustOpeningBalInput" min="0" step="0.01" class="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-slate-200 outline-none focus:border-sky-500 font-mono" placeholder="0.00">
+          </div>
         </div>
         <div class="flex gap-2 pt-2">
-          <button type="submit" class="flex-1 py-2.5 bg-sky-600 hover:bg-sky-500 text-white rounded-xl font-bold transition cursor-pointer">Save School</button>
-          <button type="button" onclick="document.getElementById('schoolCustomerModal').classList.add('hidden')" class="w-1/3 py-2.5 bg-slate-800 text-slate-300 rounded-xl font-bold">Cancel</button>
+          <button type="submit" class="flex-1 py-2.5 bg-sky-600 hover:bg-sky-500 text-white rounded-xl font-bold transition cursor-pointer">
+            💾 පාරිභෝගිකයා සුරකින්න (Save Customer)
+          </button>
+          <button type="button" onclick="document.getElementById('schoolCustomerModal').classList.add('hidden')" class="w-1/3 py-2.5 bg-slate-800 text-slate-300 rounded-xl font-bold">
+            අවලංගුයි
+          </button>
         </div>
       </form>
     </div>
@@ -5198,7 +5299,7 @@ input[type=number] {
   <div id="barcodeStickerPrintArea" class="printable-barcode-sheet"></div>
   <div id="a4ReportPrintArea" class="printable-a4-report-area"></div>
 
-    <!-- Development Mode: Direct Modular Scripts (Edit .js files and refresh directly!) -->
+  <!-- Clean Modular PWA Scripts (Works offline, on localhost and on GitHub Pages!) -->
   <script src="./dexie.min.js"></script>
   <script src="./db.js"></script>
   <script src="./auth.js"></script>

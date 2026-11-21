@@ -144,56 +144,55 @@ const SchoolCreditManager = {
       return;
     }
 
-    tbody.innerHTML = schools.map(s => {
+    tbody.innerHTML = schools.map((s, idx) => {
       const due = Number(s.creditBalance) || 0;
       const limit = Number(s.creditLimit) || 0;
-      const code = s.schoolCode || 'SCH-' + s.id;
+      const spent = Number(s.totalSpent) || 0;
 
       return `
-        <tr class="border-b border-slate-800/80 hover:bg-slate-800/40 text-xs transition">
-          <td class="p-3 font-mono font-bold text-sky-400">
-            <span class="px-2 py-0.5 bg-sky-950/80 border border-sky-800 rounded-lg text-sky-300">${code}</span>
-          </td>
-          <td class="p-3">
+        <tr class="border-b border-slate-800/80 hover:bg-slate-800/40 text-xs transition font-mono">
+          <td class="p-3 text-slate-500 font-sans">${idx + 1}</td>
+          <td class="p-3 font-sans">
             <div class="font-extrabold text-slate-100 text-sm flex items-center gap-1.5">
-              <span>🏫</span>
+              <span>👤</span>
               <span>${s.name}</span>
             </div>
-            <div class="text-slate-400 text-[11px] mt-0.5">${s.address || 'No address specified'}</div>
+            <div class="text-amber-400 font-bold text-[11px] mt-0.5">🏫 ${s.schoolName || s.name}</div>
+            <div class="text-slate-500 text-[10px]">${s.address || 'ලිපිනයක් නැත'}</div>
           </td>
-          <td class="p-3 text-slate-300 font-mono">
-            <div>📞 ${s.phone || '---'}</div>
-            ${s.contactPerson ? `<div class="text-[10px] text-slate-500">Rep: ${s.contactPerson}</div>` : ''}
-          </td>
-          <td class="p-3 text-right font-mono text-slate-400">
+          <td class="p-3 text-sky-400">📱 ${s.phone || '---'}</td>
+          <td class="p-3 text-right text-slate-400">
             ${limit > 0 ? formatLKR(limit) : '<span class="text-slate-600">No Limit</span>'}
           </td>
-          <td class="p-3 text-right font-mono">
+          <td class="p-3 text-right">
             <span class="text-sm font-black ${due > 0 ? 'text-rose-400' : 'text-emerald-400'}">
               ${formatLKR(due)}
             </span>
           </td>
-          <td class="p-3 text-center">
+          <td class="p-3 text-right text-slate-300">
+            ${formatLKR(spent)}
+          </td>
+          <td class="p-3 text-center font-sans">
             <span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${due > 0 ? 'bg-rose-950/80 text-rose-300 border border-rose-800' : 'bg-emerald-950/80 text-emerald-300 border border-emerald-800'}">
               ${due > 0 ? 'ණය හිඟයි (Due)' : 'ගෙවා අවසන් (Settled)'}
             </span>
           </td>
-          <td class="p-3 text-right">
+          <td class="p-3 text-right font-sans">
             <div class="flex items-center justify-end gap-1.5 flex-wrap">
               <button onclick="SchoolCreditManager.openSchoolMealCreditModal(${s.id})" class="px-2.5 py-1 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white rounded-lg text-[11px] font-black transition flex items-center gap-1 shadow-md shadow-amber-600/30" title="දෙමාපියන් එළවළු ණයට ගැනීම (School Meal Vegetable Credit)">
                 <span>🥕</span> <span>එළවළු ණය</span>
               </button>
-              <button onclick="SchoolCreditManager.openDirectSchoolCreditModal(${s.id})" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 rounded-lg text-[11px] font-bold transition" title="Add Direct Credit without invoice">
-                ➕ ණය
+              <button onclick="CustomerManager.openCustomerStatementModal(${s.id})" class="px-2.5 py-1 bg-sky-700 hover:bg-sky-600 text-white rounded-lg text-[11px] font-bold transition flex items-center gap-1 shadow-sm" title="සම්පූර්ණ ගනුදෙනු ඉතිහාසය හා බිල්පත් ලෙජරය (Full History & Statement)">
+                <span>📋</span> <span>ඉතිහාසය</span>
               </button>
-              <button onclick="SchoolCreditManager.openSchoolSettlementModal(${s.id})" class="px-2.5 py-1 bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-700 text-emerald-300 rounded-lg text-[11px] font-bold transition" title="Collect Payment">
+              <button onclick="SchoolCreditManager.openSchoolSettlementModal(${s.id})" class="px-2.5 py-1 bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-700 text-emerald-300 rounded-lg text-[11px] font-bold transition" title="ණය මුදල් අයවීම (Collect Payment)">
                 💰 අයවීම
               </button>
-              <button onclick="SchoolCreditManager.openSchoolStatementModal(${s.id})" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-[11px] font-bold transition" title="View Full History / Ledger">
-                📋 විස්තර
-              </button>
-              <button onclick="SchoolCreditManager.openEditSchoolModal(${s.id})" class="p-1 hover:bg-slate-700 text-slate-400 hover:text-white rounded transition" title="Edit School Details">
+              <button onclick="SchoolCreditManager.openEditSchoolModal(${s.id})" class="p-1 hover:bg-slate-700 text-slate-400 hover:text-white rounded transition" title="Edit Customer Details">
                 ✏️
+              </button>
+              <button onclick="CustomerManager.deleteCustomer(${s.id})" class="p-1 hover:bg-rose-900/60 text-slate-400 hover:text-rose-300 rounded transition" title="Delete Customer">
+                🗑️
               </button>
             </div>
           </td>
@@ -279,9 +278,12 @@ const SchoolCreditManager = {
     this.selectedSchoolIdForAction = null;
     const modal = document.getElementById('schoolCustomerModal');
     if (!modal) return;
-    document.getElementById('schoolCustomerModalTitle').textContent = 'අලුත් පාසලක් / ආයතනයක් එක් කිරීම (Add School Account)';
+    const title = document.getElementById('schoolCustomerModalTitle');
+    if (title) title.textContent = 'පාසල් පාරිභෝගිකයෙකු / දෙමාපියන් එක් කිරීම (Add School Customer)';
     document.getElementById('schoolCustIdInput').value = '';
     document.getElementById('schoolCustNameInput').value = '';
+    const schoolNameInput = document.getElementById('schoolCustSchoolNameInput');
+    if (schoolNameInput) schoolNameInput.value = '';
     document.getElementById('schoolCustCodeInput').value = 'SCH-' + Math.floor(100 + Math.random() * 900);
     document.getElementById('schoolCustPhoneInput').value = '';
     document.getElementById('schoolCustAddressInput').value = '';
@@ -291,15 +293,19 @@ const SchoolCreditManager = {
   },
 
   async openEditSchoolModal(id) {
-    const cust = await db.customers.get(id);
+    let cust = await db.customers.get(id);
+    if (!cust && !isNaN(Number(id))) cust = await db.customers.get(Number(id));
     if (!cust) return;
     this.selectedSchoolIdForAction = cust.id;
 
     const modal = document.getElementById('schoolCustomerModal');
     if (!modal) return;
-    document.getElementById('schoolCustomerModalTitle').textContent = `පාසල් විස්තර සංස්කරණය (Edit: ${cust.name})`;
+    const title = document.getElementById('schoolCustomerModalTitle');
+    if (title) title.textContent = `පාරිභෝගික විස්තර සංස්කරණය (Edit: ${cust.name})`;
     document.getElementById('schoolCustIdInput').value = cust.id;
     document.getElementById('schoolCustNameInput').value = cust.name;
+    const schoolNameInput = document.getElementById('schoolCustSchoolNameInput');
+    if (schoolNameInput) schoolNameInput.value = cust.schoolName || '';
     document.getElementById('schoolCustCodeInput').value = cust.schoolCode || ('SCH-' + cust.id);
     document.getElementById('schoolCustPhoneInput').value = cust.phone || '';
     document.getElementById('schoolCustAddressInput').value = cust.address || '';
@@ -312,6 +318,7 @@ const SchoolCreditManager = {
     if (e) e.preventDefault();
     const id = document.getElementById('schoolCustIdInput')?.value;
     const name = document.getElementById('schoolCustNameInput')?.value.trim();
+    const schoolName = document.getElementById('schoolCustSchoolNameInput')?.value.trim() || 'පාසල් දිවා ආහාරය';
     const code = document.getElementById('schoolCustCodeInput')?.value.trim().toUpperCase() || ('SCH-' + Date.now().toString().slice(-4));
     const phone = document.getElementById('schoolCustPhoneInput')?.value.trim();
     const address = document.getElementById('schoolCustAddressInput')?.value.trim();
@@ -319,15 +326,16 @@ const SchoolCreditManager = {
     const openingBalance = parseFloat(document.getElementById('schoolCustOpeningBalInput')?.value) || 0;
 
     if (!name) {
-      alert('කරුණාකර පාසලේ නම ඇතුළත් කරන්න (Please enter School Name)');
+      alert('කරුණාකර පාරිභෝගිකයාගේ නම ඇතුළත් කරන්න (Please enter Customer Name)');
       return;
     }
 
     const data = {
       name,
+      schoolName,
       schoolCode: code,
-      phone,
-      address,
+      phone: phone || '',
+      address: address || '',
       creditLimit,
       openingBalance,
       isSchool: true,
@@ -339,15 +347,20 @@ const SchoolCreditManager = {
       await db.customers.update(parseInt(id), data);
     } else {
       data.creditBalance = openingBalance;
+      data.totalSpent = 0;
       data.createdAt = new Date().toISOString();
       await db.customers.add(data);
     }
 
     document.getElementById('schoolCustomerModal')?.classList.add('hidden');
     await this.init();
-    if (window.CustomerManager) CustomerManager.init();
+    if (window.CustomerManager) {
+      await CustomerManager.renderCustomerTable();
+      await CustomerManager.renderCreditTab();
+    }
+    if (window.DashboardManager) DashboardManager.renderDashboard();
     if (window.SoundManager) SoundManager.playSuccessChime();
-    alert('පාසල් ගිණුම සාර්ථකව සුරකින ලදී! (School account saved successfully)');
+    alert('පාසල් පාරිභෝගිකයා සාර්ථකව සුරකින ලදී! (School customer saved successfully)');
   },
 
   // =========================================================================
@@ -837,7 +850,7 @@ const SchoolCreditManager = {
           window.onload = function() {
             setTimeout(function() { window.focus(); window.print(); }, 200);
           };
-        </script>
+        <\/script>
       </body>
       </html>
     `;
