@@ -427,6 +427,14 @@ input[type=number] {
     width: 96% !important;
     margin: auto !important;
   }
+  #bulkStockModal > div {
+    width: 100% !important;
+    max-width: 100vw !important;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    border-radius: 0px !important;
+    margin: 0 !important;
+  }
 }
 
 .hidden {
@@ -3034,21 +3042,24 @@ input[type=number] {
         <svg class="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
         <span class="text-[10px]" data-i18n="posTerminal">POS</span>
       </button>
-      <button onclick="App.switchTab('dashboard')" data-tab="dashboard" class="mobile-nav-btn flex-1 py-1 flex flex-col items-center justify-center text-slate-400 hover:text-slate-200 transition">
-        <svg class="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
-        <span class="text-[10px]" data-i18n="dashboard">Dashboard</span>
+      <button onclick="App.switchTab('inventory')" data-tab="inventory" class="mobile-nav-btn flex-1 py-1 flex flex-col items-center justify-center text-slate-400 hover:text-slate-200 transition">
+        <svg class="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
+        <span class="text-[10px]" data-i18n="inventory">තොග</span>
       </button>
-      <button onclick="App.switchTab('shifts')" data-tab="shifts" class="mobile-nav-btn flex-1 py-1 flex flex-col items-center justify-center text-slate-400 hover:text-slate-200 transition">
-        <svg class="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-        <span class="text-[10px]" data-i18n="shifts">Shifts</span>
+      <!-- Center Prominent Market Intake Button for Fast Phone Updates -->
+      <button onclick="InventoryManager.openBulkStockModal()" class="flex-1 py-0.5 flex flex-col items-center justify-center text-violet-400 hover:text-violet-300 font-bold transition">
+        <div class="w-8 h-8 rounded-full bg-gradient-to-tr from-violet-600 to-indigo-600 flex items-center justify-center text-white shadow-md shadow-violet-600/40 -mt-2.5 border-2 border-slate-900">
+          <span class="text-xs">📋</span>
+        </div>
+        <span class="text-[9px] font-black text-violet-300 mt-0.5">මාර්කට් Intake</span>
       </button>
       <button onclick="App.switchTab('credit')" data-tab="credit" class="mobile-nav-btn flex-1 py-1 flex flex-col items-center justify-center text-slate-400 hover:text-slate-200 transition">
         <svg class="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>
-        <span class="text-[10px]">Credit</span>
+        <span class="text-[10px]">ණය (Credit)</span>
       </button>
       <button onclick="App.openMobileMoreDrawer()" data-tab="more" class="mobile-nav-btn flex-1 py-1 flex flex-col items-center justify-center text-slate-400 hover:text-slate-200 transition">
         <svg class="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
-        <span class="text-[10px]">More ☰</span>
+        <span class="text-[10px]">මෙනුව ☰</span>
       </button>
     </nav>
 
@@ -4544,6 +4555,18 @@ input[type=number] {
       </div>
 
       <div class="grid grid-cols-3 gap-2.5 py-2">
+        <button onclick="App.closeMobileMoreDrawer(); InventoryManager.openBulkStockModal();" class="p-3 bg-gradient-to-tr from-violet-900/60 to-indigo-900/60 hover:bg-violet-800 border border-violet-500/60 rounded-2xl flex flex-col items-center text-center gap-1.5 transition">
+          <span class="text-xl">📋</span>
+          <span class="text-[11px] font-black text-violet-200">Market Intake</span>
+        </button>
+        <button onclick="App.switchTab('inventory'); App.closeMobileMoreDrawer();" data-permission="inventory" class="p-3 bg-slate-850 hover:bg-slate-800 border border-slate-700/80 rounded-2xl flex flex-col items-center text-center gap-1.5 transition">
+          <span class="text-xl">📦</span>
+          <span class="text-[11px] font-bold text-slate-200" data-i18n="inventory">Inventory</span>
+        </button>
+        <button onclick="App.switchTab('schoolcredit'); App.closeMobileMoreDrawer();" class="p-3 bg-slate-850 hover:bg-slate-800 border border-amber-600/60 rounded-2xl flex flex-col items-center text-center gap-1.5 transition">
+          <span class="text-xl">🏫</span>
+          <span class="text-[11px] font-bold text-amber-300">School Credit</span>
+        </button>
         <button onclick="App.switchTab('grn')" data-permission="grn" class="p-3 bg-slate-850 hover:bg-slate-800 border border-slate-700/80 rounded-2xl flex flex-col items-center text-center gap-1.5 transition">
           <span class="text-xl">📥</span>
           <span class="text-[11px] font-bold text-slate-200" data-i18n="grn">GRN Purchases</span>
@@ -5301,66 +5324,64 @@ input[type=number] {
   <div id="barcodeStickerPrintArea" class="printable-barcode-sheet"></div>
   <div id="a4ReportPrintArea" class="printable-a4-report-area"></div>
   <!-- ================================================================ -->
-  <!-- BULK STOCK & PRICE BATCH UPDATE MODAL                           -->
+  <!-- BULK STOCK & PRICE BATCH UPDATE MODAL (MOBILE & PC RESPONSIVE)   -->
   <!-- ================================================================ -->
-  <div id="bulkStockModal" class="app-modal fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 hidden">
-    <div class="w-full max-w-4xl bg-slate-900 border border-violet-600/70 rounded-3xl shadow-2xl flex flex-col overflow-hidden" style="max-height: 92vh;">
+  <div id="bulkStockModal" class="app-modal fixed inset-0 z-50 bg-slate-950/95 sm:bg-slate-950/90 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 hidden">
+    <div class="w-full h-full sm:h-auto sm:max-w-4xl bg-slate-900 border-0 sm:border border-violet-600/70 rounded-none sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden max-h-[100dvh] sm:max-h-[92vh]">
       
-      <!-- Modal Header -->
-      <div class="flex items-center justify-between px-5 py-3.5 bg-slate-900 border-b border-slate-800 shrink-0">
-        <div>
-          <h3 class="text-sm font-extrabold text-white flex items-center gap-2">
-            <span class="text-base">📋</span> <span>Bulk Stock &amp; Price Intake (තොග සහ මිල ගණන් Batch Update)</span>
+      <!-- Modal Header (Compact & Mobile-Optimized) -->
+      <div class="flex items-center justify-between px-4 sm:px-5 py-3 sm:py-3.5 bg-slate-900 border-b border-slate-800 shrink-0">
+        <div class="min-w-0 flex-1 pr-2">
+          <h3 class="text-xs sm:text-sm font-black text-white flex items-center gap-1.5 sm:gap-2 truncate">
+            <span class="text-sm sm:text-base">📋</span> <span>මාර්කට් මිල &amp; තොග Batch Update</span>
           </h3>
-          <p class="text-[11px] text-slate-400 mt-0.5">SKU / Barcode හෝ නමෙන් සොයා, අලුත් තොග/මිල දමා 'Add to Batch' කරන්න &rarr; අවසානයේ 'Save All' ඔබන්න.</p>
+          <p class="text-[10px] sm:text-[11px] text-slate-400 mt-0.5 truncate">SKU/නමින් සොයා අගයන් දමා 'Add to Batch' කරන්න &rarr; 'Save All' ඔබන්න.</p>
         </div>
-        <button onclick="document.getElementById('bulkStockModal').classList.add('hidden')" class="text-slate-400 hover:text-white text-xl font-bold w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-800 transition">&times;</button>
+        <button onclick="document.getElementById('bulkStockModal').classList.add('hidden')" class="text-slate-400 hover:text-white text-2xl font-bold w-9 h-9 flex items-center justify-center rounded-xl bg-slate-800 hover:bg-slate-700 transition shrink-0">&times;</button>
       </div>
 
       <!-- Top Search & Active Item Bar -->
-      <div class="p-4 bg-slate-950/80 border-b border-slate-800/80 shrink-0 space-y-3">
+      <div class="p-3 sm:p-4 bg-slate-950/80 border-b border-slate-800/80 shrink-0 space-y-2.5 sm:space-y-3">
         
         <!-- Live Product Search Bar -->
         <div class="relative">
-          <label class="block text-slate-300 font-bold text-xs mb-1">🔍 භාණ්ඩය SKU / Barcode / නමින් සොයන්න (Search Product):</label>
+          <label class="block text-slate-300 font-bold text-[11px] sm:text-xs mb-1">🔍 භාණ්ඩය SKU / Barcode / නමින් සොයන්න:</label>
           <div class="relative">
-            <input id="bulkStockSearchInput" type="text" autocomplete="off"
-                   placeholder="Type SKU (e.g. KEERI-01) or scan barcode or product name..."
+            <input id="bulkStockSearchInput" type="text" autocomplete="off" inputmode="search"
+                   placeholder="SKU (e.g. KEERI-01) හෝ නම ටයිප් කරන්න..."
                    oninput="InventoryManager.searchBulkProducts(this.value)"
                    onkeydown="InventoryManager.handleBulkSearchKeydown(event)"
-                   class="w-full pl-9 pr-4 py-2.5 bg-slate-900 border border-violet-700/60 rounded-xl text-white text-xs placeholder-slate-500 focus:outline-none focus:border-violet-400 focus:ring-1 focus:ring-violet-400 font-medium" />
+                   class="w-full pl-9 pr-4 py-2.5 sm:py-2.5 bg-slate-900 border border-violet-700/60 rounded-xl text-white text-xs sm:text-sm placeholder-slate-500 focus:outline-none focus:border-violet-400 focus:ring-1 focus:ring-violet-400 font-medium" />
             <svg class="w-4 h-4 absolute left-3 top-3 text-violet-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
           </div>
 
           <!-- Dropdown Search Results -->
-          <div id="bulkStockSearchResults" class="hidden absolute left-0 right-0 top-full mt-1 bg-slate-900 border border-violet-700/80 rounded-2xl shadow-2xl max-h-56 overflow-y-auto z-50 divide-y divide-slate-800 text-xs"></div>
+          <div id="bulkStockSearchResults" class="hidden absolute left-0 right-0 top-full mt-1 bg-slate-900 border border-violet-700/80 rounded-2xl shadow-2xl max-h-52 overflow-y-auto z-50 divide-y divide-slate-800 text-xs"></div>
         </div>
 
         <!-- Active Product Input Card (Visible once product is picked) -->
-        <div id="bulkActiveProductPanel" class="hidden bg-slate-900/90 border border-violet-600/60 rounded-2xl p-3.5 space-y-3">
+        <div id="bulkActiveProductPanel" class="hidden bg-slate-900/95 border border-violet-600/60 rounded-2xl p-3 sm:p-3.5 space-y-2.5 sm:space-y-3 shadow-inner">
           
           <!-- Product Name & Current Stock Banner -->
-          <div class="flex items-center justify-between pb-2 border-b border-slate-800 flex-wrap gap-2">
-            <div>
-              <div id="bulkActiveName" class="font-extrabold text-sm text-white">Product Name</div>
-              <div id="bulkActiveSku" class="text-[11px] text-sky-400 font-mono mt-0.5">SKU: ---</div>
+          <div class="flex items-center justify-between pb-2 border-b border-slate-800 flex-wrap gap-1.5">
+            <div class="min-w-0 flex-1">
+              <div id="bulkActiveName" class="font-extrabold text-xs sm:text-sm text-white truncate">Product Name</div>
+              <div id="bulkActiveSku" class="text-[10px] sm:text-[11px] text-sky-400 font-mono mt-0.5">SKU: ---</div>
             </div>
-            <div class="flex items-center gap-3">
-              <div class="px-3 py-1 bg-slate-800 rounded-xl border border-slate-700 text-xs">
-                <span class="text-slate-400">දැනට තොගය: </span>
-                <strong id="bulkActiveCurrentStock" class="font-mono text-emerald-400 font-bold">0</strong>
-              </div>
+            <div class="px-2.5 py-1 bg-slate-800 rounded-xl border border-slate-700 text-xs shrink-0">
+              <span class="text-slate-400 text-[10px] sm:text-xs">දැනට තොගය: </span>
+              <strong id="bulkActiveCurrentStock" class="font-mono text-emerald-400 font-bold text-xs sm:text-sm">0</strong>
             </div>
           </div>
 
-          <!-- 4 Fields: Add Stock, Retail, Wholesale, Cost -->
-          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+          <!-- 4 Fields: Add Stock, Retail, Wholesale, Cost (Touch & Numeric Optimized) -->
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3 text-xs">
             <div>
-              <label class="block text-emerald-400 font-bold mb-1">➕ Add Stock (+තොගය)</label>
-              <input id="bulkActiveAddStock" type="number" step="0.01" placeholder="0"
+              <label class="block text-emerald-400 font-bold mb-1 text-[11px]">➕ Add Stock (+තොගය)</label>
+              <input id="bulkActiveAddStock" type="number" step="0.01" inputmode="decimal" placeholder="0"
                      oninput="InventoryManager.onBulkActiveAddStockChange()"
                      onkeydown="if(event.key==='Enter'){event.preventDefault(); InventoryManager.addActiveProductToBatch();}"
-                     class="w-full p-2 bg-slate-950 border border-emerald-600/70 rounded-xl text-emerald-300 font-mono font-bold text-center text-xs focus:border-emerald-400" />
+                     class="w-full p-2.5 sm:p-2 bg-slate-950 border border-emerald-600/70 rounded-xl text-emerald-300 font-mono font-bold text-center text-sm focus:border-emerald-400" />
               <div class="text-[10px] text-slate-400 mt-1 flex justify-between">
                 <span>නව තොගය:</span>
                 <span id="bulkActiveNewStockPreview" class="font-mono font-bold text-slate-300 text-[11px]">0</span>
@@ -5368,36 +5389,36 @@ input[type=number] {
             </div>
 
             <div>
-              <label class="block text-sky-400 font-bold mb-1">🏷️ Retail Price (මිල)</label>
-              <input id="bulkActiveRetail" type="number" step="0.5" placeholder="0.00"
+              <label class="block text-sky-400 font-bold mb-1 text-[11px]">🏷️ Retail Price (මිල)</label>
+              <input id="bulkActiveRetail" type="number" step="0.5" inputmode="decimal" placeholder="0.00"
                      onkeydown="if(event.key==='Enter'){event.preventDefault(); InventoryManager.addActiveProductToBatch();}"
-                     class="w-full p-2 bg-slate-950 border border-sky-600/70 rounded-xl text-sky-300 font-mono font-bold text-center text-xs focus:border-sky-400" />
+                     class="w-full p-2.5 sm:p-2 bg-slate-950 border border-sky-600/70 rounded-xl text-sky-300 font-mono font-bold text-center text-sm focus:border-sky-400" />
               <div class="text-[10px] text-slate-500 mt-1">Retail විකුණුම් මිල</div>
             </div>
 
             <div>
-              <label class="block text-violet-400 font-bold mb-1">📦 Wholesale Price</label>
-              <input id="bulkActiveWholesale" type="number" step="0.5" placeholder="0.00"
+              <label class="block text-violet-400 font-bold mb-1 text-[11px]">📦 Wholesale Price</label>
+              <input id="bulkActiveWholesale" type="number" step="0.5" inputmode="decimal" placeholder="0.00"
                      onkeydown="if(event.key==='Enter'){event.preventDefault(); InventoryManager.addActiveProductToBatch();}"
-                     class="w-full p-2 bg-slate-950 border border-violet-600/70 rounded-xl text-violet-300 font-mono font-bold text-center text-xs focus:border-violet-400" />
+                     class="w-full p-2.5 sm:p-2 bg-slate-950 border border-violet-600/70 rounded-xl text-violet-300 font-mono font-bold text-center text-sm focus:border-violet-400" />
               <div class="text-[10px] text-slate-500 mt-1">තොග විකුණුම් මිල</div>
             </div>
 
             <div>
-              <label class="block text-amber-400 font-bold mb-1">💰 Cost Price (මිලදී ගත්)</label>
-              <input id="bulkActiveCost" type="number" step="0.5" placeholder="0.00"
+              <label class="block text-amber-400 font-bold mb-1 text-[11px]">💰 Cost Price (මිලදී ගත්)</label>
+              <input id="bulkActiveCost" type="number" step="0.5" inputmode="decimal" placeholder="0.00"
                      onkeydown="if(event.key==='Enter'){event.preventDefault(); InventoryManager.addActiveProductToBatch();}"
-                     class="w-full p-2 bg-slate-950 border border-amber-600/70 rounded-xl text-amber-300 font-mono font-bold text-center text-xs focus:border-amber-400" />
+                     class="w-full p-2.5 sm:p-2 bg-slate-950 border border-amber-600/70 rounded-xl text-amber-300 font-mono font-bold text-center text-sm focus:border-amber-400" />
               <div class="text-[10px] text-slate-500 mt-1">පිරිවැය / Cost</div>
             </div>
           </div>
 
-          <!-- Add to Batch Action Button -->
-          <div class="flex items-center justify-between pt-1">
-            <span class="text-[11px] text-slate-400">අගයන් වෙනස් කර 'Add to Batch' click කරන්න (හෝ Enter ඔබන්න)</span>
-            <div class="flex items-center gap-2">
-              <button type="button" onclick="InventoryManager._resetBulkProductForm()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-xl text-xs font-semibold transition">Cancel</button>
-              <button type="button" onclick="InventoryManager.addActiveProductToBatch()" class="px-4 py-2 bg-gradient-to-r from-violet-600 to-sky-600 hover:from-violet-500 hover:to-sky-500 text-white rounded-xl text-xs font-extrabold transition shadow-md shadow-violet-700/30 flex items-center gap-1.5 cursor-pointer">
+          <!-- Add to Batch Action Button (Large & Touch-Friendly) -->
+          <div class="flex items-center justify-between pt-1 gap-2">
+            <span class="text-[10px] text-slate-400 hidden sm:inline">අගයන් වෙනස් කර 'Add to Batch' click කරන්න</span>
+            <div class="flex items-center gap-2 w-full sm:w-auto justify-end">
+              <button type="button" onclick="InventoryManager._resetBulkProductForm()" class="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-xl text-xs font-semibold transition">Cancel</button>
+              <button type="button" onclick="InventoryManager.addActiveProductToBatch()" class="flex-1 sm:flex-none px-4 py-2.5 sm:py-2 bg-gradient-to-r from-violet-600 to-sky-600 hover:from-violet-500 hover:to-sky-500 text-white rounded-xl text-xs sm:text-xs font-black transition shadow-md shadow-violet-700/30 flex items-center justify-center gap-1.5 cursor-pointer active:scale-95">
                 <span>➕</span> <span>ලැයිස්තුවට එක් කරන්න (Add to Batch)</span>
               </button>
             </div>
@@ -5407,47 +5428,54 @@ input[type=number] {
       </div>
 
       <!-- Staged Batch Table Header & Status -->
-      <div class="px-5 py-2.5 bg-slate-900 border-b border-slate-800 shrink-0 flex items-center justify-between text-xs">
+      <div class="px-4 sm:px-5 py-2.5 bg-slate-900 border-b border-slate-800 shrink-0 flex items-center justify-between text-xs">
         <div class="flex items-center gap-2">
-          <span class="font-extrabold text-white">📋 Staged Batch List:</span>
+          <span class="font-extrabold text-white text-xs">📋 Staged Batch List:</span>
           <span id="bulkStagedCountBadge" class="px-2 py-0.5 rounded-full text-[10px] font-black bg-violet-950 text-violet-300 border border-violet-700">0 Items</span>
         </div>
         <button type="button" onclick="InventoryManager.clearAllStagedItems()" class="text-rose-400 hover:text-rose-300 text-xs font-semibold hover:underline">Clear List</button>
       </div>
 
-      <!-- Staged Table Body -->
-      <div class="flex-1 overflow-y-auto p-2">
-        <table class="w-full text-xs">
-          <thead class="sticky top-0 bg-slate-900 z-10">
-            <tr class="text-slate-400 uppercase text-[10px] font-bold border-b border-slate-800">
-              <th class="p-2.5 text-center w-10">#</th>
-              <th class="p-2.5 text-left">Item / SKU</th>
-              <th class="p-2.5 text-center w-24">Current Stock</th>
-              <th class="p-2.5 text-center w-24">Add Stock</th>
-              <th class="p-2.5 text-center w-24">New Stock</th>
-              <th class="p-2.5 text-right w-24">Retail (Rs.)</th>
-              <th class="p-2.5 text-right w-24">Wholesale</th>
-              <th class="p-2.5 text-right w-24">Cost</th>
-              <th class="p-2.5 text-center w-12"></th>
-            </tr>
-          </thead>
-          <tbody id="bulkStockStagedTableBody"></tbody>
-        </table>
+      <!-- Staged List Container: Desktop Table vs Mobile Cards -->
+      <div class="flex-1 overflow-y-auto p-2 sm:p-3">
+        
+        <!-- Desktop Table (Hidden on Mobile) -->
+        <div class="hidden sm:block overflow-x-auto">
+          <table class="w-full text-xs">
+            <thead class="sticky top-0 bg-slate-900 z-10">
+              <tr class="text-slate-400 uppercase text-[10px] font-bold border-b border-slate-800">
+                <th class="p-2.5 text-center w-10">#</th>
+                <th class="p-2.5 text-left">Item / SKU</th>
+                <th class="p-2.5 text-center w-24">Current Stock</th>
+                <th class="p-2.5 text-center w-24">Add Stock</th>
+                <th class="p-2.5 text-center w-24">New Stock</th>
+                <th class="p-2.5 text-right w-24">Retail (Rs.)</th>
+                <th class="p-2.5 text-right w-24">Wholesale</th>
+                <th class="p-2.5 text-right w-24">Cost</th>
+                <th class="p-2.5 text-center w-12"></th>
+              </tr>
+            </thead>
+            <tbody id="bulkStockStagedTableBody"></tbody>
+          </table>
+        </div>
+
+        <!-- Mobile Phone Touch Cards List (Hidden on Desktop) -->
+        <div id="bulkStockStagedMobileList" class="sm:hidden space-y-2"></div>
 
         <!-- Empty State -->
-        <div id="bulkStockStagedEmpty" class="py-12 flex flex-col items-center justify-center text-slate-500 text-xs">
+        <div id="bulkStockStagedEmpty" class="py-10 sm:py-12 flex flex-col items-center justify-center text-slate-500 text-xs">
           <div class="text-3xl mb-2">📋</div>
           <div class="font-bold text-slate-400 text-sm">ලැයිස්තුව හිස්ය (Batch List is Empty)</div>
-          <div class="text-[11px] mt-1 text-slate-500">ඉහත Search කොටුවෙන් භාණ්ඩ සොයා, අගයන් දමා 'Add to Batch' ඔබන්න.</div>
+          <div class="text-[11px] mt-1 text-slate-500 text-center px-4">ඉහත Search කොටුවෙන් භාණ්ඩ සොයා, අගයන් දමා 'Add to Batch' ඔබන්න.</div>
         </div>
       </div>
 
-      <!-- Modal Footer -->
-      <div class="px-5 py-3.5 bg-slate-950 border-t border-slate-800 shrink-0 flex items-center justify-between gap-3">
-        <div class="text-xs text-slate-500">* 'Save All' ඔබන තුරු තොග සහ මිල වෙනස්කම් Database එකට සුරැකෙන්නේ නැත.</div>
-        <div class="flex items-center gap-2">
-          <button type="button" onclick="document.getElementById('bulkStockModal').classList.add('hidden')" class="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-bold text-xs transition">Cancel</button>
-          <button id="bulkStockSaveAllBtn" type="button" disabled onclick="InventoryManager.saveBulkStockUpdate()" class="px-6 py-2.5 bg-slate-800 text-slate-500 rounded-xl font-extrabold text-sm transition cursor-not-allowed">
+      <!-- Modal Footer (Sticky at Bottom for Phone Thumb Reach) -->
+      <div class="px-4 sm:px-5 py-3 sm:py-3.5 bg-slate-950 border-t border-slate-800 shrink-0 flex flex-col sm:flex-row items-center justify-between gap-2.5 sm:gap-3" style="padding-bottom: max(12px, env(safe-area-inset-bottom));">
+        <div class="text-[11px] text-slate-500 hidden sm:block">* 'Save All' ඔබන තුරු වෙනස්කම් Database එකට සුරැකෙන්නේ නැත.</div>
+        <div class="flex items-center gap-2 w-full sm:w-auto">
+          <button type="button" onclick="document.getElementById('bulkStockModal').classList.add('hidden')" class="px-4 py-2.5 sm:py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-bold text-xs transition">Cancel</button>
+          <button id="bulkStockSaveAllBtn" type="button" disabled onclick="InventoryManager.saveBulkStockUpdate()" class="flex-1 sm:flex-none px-6 py-2.5 sm:py-2.5 bg-slate-800 text-slate-500 rounded-xl font-extrabold text-xs sm:text-sm transition cursor-not-allowed text-center">
             💾 Save All Changes (සියල්ල Save කරන්න)
           </button>
         </div>
@@ -13009,6 +13037,7 @@ const InventoryManager = {
 
   _renderBulkStagedTable() {
     const tbody = document.getElementById('bulkStockStagedTableBody');
+    const mobileContainer = document.getElementById('bulkStockStagedMobileList');
     const emptyState = document.getElementById('bulkStockStagedEmpty');
     const countBadge = document.getElementById('bulkStagedCountBadge');
     const saveBtn = document.getElementById('bulkStockSaveAllBtn');
@@ -13018,45 +13047,83 @@ const InventoryManager = {
     if (saveBtn) {
       saveBtn.disabled = count === 0;
       saveBtn.className = count === 0
-        ? 'px-6 py-2.5 bg-slate-800 text-slate-500 rounded-xl font-extrabold text-sm transition cursor-not-allowed'
-        : 'px-6 py-2.5 bg-gradient-to-r from-violet-600 to-emerald-600 hover:from-violet-500 hover:to-emerald-500 text-white rounded-xl font-extrabold text-sm transition shadow-lg shadow-emerald-700/40 flex items-center gap-2 cursor-pointer';
+        ? 'w-full sm:w-auto px-6 py-2.5 sm:py-3 bg-slate-800 text-slate-500 rounded-xl font-extrabold text-xs sm:text-sm transition cursor-not-allowed text-center'
+        : 'w-full sm:w-auto px-6 py-2.5 sm:py-3 bg-gradient-to-r from-violet-600 to-emerald-600 hover:from-violet-500 hover:to-emerald-500 text-white rounded-xl font-extrabold text-xs sm:text-sm transition shadow-lg shadow-emerald-700/40 flex items-center justify-center gap-2 cursor-pointer active:scale-95';
     }
 
-    if (!tbody) return;
-
     if (count === 0) {
-      tbody.innerHTML = '';
+      if (tbody) tbody.innerHTML = '';
+      if (mobileContainer) mobileContainer.innerHTML = '';
       if (emptyState) emptyState.classList.remove('hidden');
       return;
     }
 
     if (emptyState) emptyState.classList.add('hidden');
 
-    tbody.innerHTML = this._bulkStagedItems.map((item, index) => {
-      const stockDiffText = item.addStock > 0 ? `+${item.addStock}` : (item.addStock < 0 ? `${item.addStock}` : '0');
-      const stockDiffColor = item.addStock > 0 ? 'text-emerald-400' : (item.addStock < 0 ? 'text-rose-400' : 'text-slate-400');
+    // 1. Desktop Detailed Table
+    if (tbody) {
+      tbody.innerHTML = this._bulkStagedItems.map((item, index) => {
+        const stockDiffText = item.addStock > 0 ? `+${item.addStock}` : (item.addStock < 0 ? `${item.addStock}` : '0');
+        const stockDiffColor = item.addStock > 0 ? 'text-emerald-400' : (item.addStock < 0 ? 'text-rose-400' : 'text-slate-400');
 
-      return `
-        <tr class="border-b border-slate-800 hover:bg-slate-800/40 text-xs transition">
-          <td class="p-2.5 font-mono text-slate-500 text-center font-bold">${index + 1}</td>
-          <td class="p-2.5">
-            <div class="font-bold text-slate-100">${item.name}</div>
-            <div class="text-[10px] text-sky-400 font-mono mt-0.5">${item.sku}</div>
-          </td>
-          <td class="p-2.5 text-center font-mono text-slate-400">${item.oldStock} ${item.unit}</td>
-          <td class="p-2.5 text-center font-mono font-bold ${stockDiffColor}">${stockDiffText}</td>
-          <td class="p-2.5 text-center font-mono font-extrabold text-sky-300 bg-sky-950/30 rounded-lg">${item.newStock} ${item.unit}</td>
-          <td class="p-2.5 text-right font-mono font-bold text-emerald-400">${formatLKR(item.retailPrice)}</td>
-          <td class="p-2.5 text-right font-mono font-bold text-violet-400">${formatLKR(item.wholesalePrice)}</td>
-          <td class="p-2.5 text-right font-mono text-amber-400">${formatLKR(item.costPrice)}</td>
-          <td class="p-2.5 text-center">
-            <button onclick="InventoryManager.removeStagedItem(${index})" class="p-1.5 text-rose-400 hover:text-rose-300 hover:bg-rose-950/60 rounded-lg transition" title="ඉවත් කරන්න (Remove)">
-              🗑️
-            </button>
-          </td>
-        </tr>
-      `;
-    }).join('');
+        return `
+          <tr class="border-b border-slate-800 hover:bg-slate-800/40 text-xs transition">
+            <td class="p-2.5 font-mono text-slate-500 text-center font-bold">${index + 1}</td>
+            <td class="p-2.5">
+              <div class="font-bold text-slate-100">${item.name}</div>
+              <div class="text-[10px] text-sky-400 font-mono mt-0.5">${item.sku}</div>
+            </td>
+            <td class="p-2.5 text-center font-mono text-slate-400">${item.oldStock} ${item.unit}</td>
+            <td class="p-2.5 text-center font-mono font-bold ${stockDiffColor}">${stockDiffText}</td>
+            <td class="p-2.5 text-center font-mono font-extrabold text-sky-300 bg-sky-950/30 rounded-lg">${item.newStock} ${item.unit}</td>
+            <td class="p-2.5 text-right font-mono font-bold text-emerald-400">${formatLKR(item.retailPrice)}</td>
+            <td class="p-2.5 text-right font-mono font-bold text-violet-400">${formatLKR(item.wholesalePrice)}</td>
+            <td class="p-2.5 text-right font-mono text-amber-400">${formatLKR(item.costPrice)}</td>
+            <td class="p-2.5 text-center">
+              <button onclick="InventoryManager.removeStagedItem(${index})" class="p-1.5 text-rose-400 hover:text-rose-300 hover:bg-rose-950/60 rounded-lg transition" title="ඉවත් කරන්න (Remove)">
+                🗑️
+              </button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    // 2. Mobile Phone Touch Cards
+    if (mobileContainer) {
+      mobileContainer.innerHTML = this._bulkStagedItems.map((item, index) => {
+        const stockDiffText = item.addStock > 0 ? `+${item.addStock}` : (item.addStock < 0 ? `${item.addStock}` : '0');
+        const stockDiffColor = item.addStock > 0 ? 'text-emerald-400' : (item.addStock < 0 ? 'text-rose-400' : 'text-slate-400');
+
+        return `
+          <div class="p-3 bg-slate-900 border border-slate-800/80 rounded-2xl flex flex-col gap-2 shadow-sm">
+            <div class="flex items-start justify-between gap-2">
+              <div class="min-w-0 flex-1">
+                <div class="font-bold text-white text-xs sm:text-sm leading-snug">${index + 1}. ${item.name}</div>
+                <div class="text-[10px] text-sky-400 font-mono mt-0.5">${item.sku} &bull; ${item.unit}</div>
+              </div>
+              <button onclick="InventoryManager.removeStagedItem(${index})" class="p-1.5 text-rose-400 hover:text-rose-300 hover:bg-rose-950/60 rounded-xl transition shrink-0" title="ඉවත් කරන්න">
+                🗑️
+              </button>
+            </div>
+            <div class="grid grid-cols-3 gap-1.5 text-center text-xs">
+              <div class="p-1.5 bg-slate-950/80 rounded-xl border border-slate-800">
+                <div class="text-[9px] text-slate-400 font-medium">තොගය (Stock)</div>
+                <div class="font-mono text-[11px] font-bold text-slate-200 mt-0.5">${item.oldStock} <span class="${stockDiffColor}">(${stockDiffText})</span> &rarr; <strong class="text-sky-300 font-extrabold">${item.newStock}</strong></div>
+              </div>
+              <div class="p-1.5 bg-slate-950/80 rounded-xl border border-slate-800">
+                <div class="text-[9px] text-slate-400 font-medium">Retail මිල</div>
+                <div class="font-mono text-[11px] font-bold text-emerald-400 mt-0.5">${formatLKR(item.retailPrice)}</div>
+              </div>
+              <div class="p-1.5 bg-slate-950/80 rounded-xl border border-slate-800">
+                <div class="text-[9px] text-slate-400 font-medium">Cost මිල</div>
+                <div class="font-mono text-[11px] font-bold text-amber-400 mt-0.5">${formatLKR(item.costPrice)}</div>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
   },
 
   async saveBulkStockUpdate() {

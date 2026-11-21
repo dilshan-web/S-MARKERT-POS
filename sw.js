@@ -1,4 +1,4 @@
-﻿const CACHE_NAME = 'lankapos-v3.9.0-offline-pwa';
+﻿const CACHE_NAME = 'lankapos-v3.9.1-mobile-market-pwa';
 
 // Core essential static assets
 const CORE_ASSETS = [

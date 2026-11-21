@@ -7549,6 +7549,7 @@ const InventoryManager = {
 
   _renderBulkStagedTable() {
     const tbody = document.getElementById('bulkStockStagedTableBody');
+    const mobileContainer = document.getElementById('bulkStockStagedMobileList');
     const emptyState = document.getElementById('bulkStockStagedEmpty');
     const countBadge = document.getElementById('bulkStagedCountBadge');
     const saveBtn = document.getElementById('bulkStockSaveAllBtn');
@@ -7558,45 +7559,83 @@ const InventoryManager = {
     if (saveBtn) {
       saveBtn.disabled = count === 0;
       saveBtn.className = count === 0
-        ? 'px-6 py-2.5 bg-slate-800 text-slate-500 rounded-xl font-extrabold text-sm transition cursor-not-allowed'
-        : 'px-6 py-2.5 bg-gradient-to-r from-violet-600 to-emerald-600 hover:from-violet-500 hover:to-emerald-500 text-white rounded-xl font-extrabold text-sm transition shadow-lg shadow-emerald-700/40 flex items-center gap-2 cursor-pointer';
+        ? 'w-full sm:w-auto px-6 py-2.5 sm:py-3 bg-slate-800 text-slate-500 rounded-xl font-extrabold text-xs sm:text-sm transition cursor-not-allowed text-center'
+        : 'w-full sm:w-auto px-6 py-2.5 sm:py-3 bg-gradient-to-r from-violet-600 to-emerald-600 hover:from-violet-500 hover:to-emerald-500 text-white rounded-xl font-extrabold text-xs sm:text-sm transition shadow-lg shadow-emerald-700/40 flex items-center justify-center gap-2 cursor-pointer active:scale-95';
     }
 
-    if (!tbody) return;
-
     if (count === 0) {
-      tbody.innerHTML = '';
+      if (tbody) tbody.innerHTML = '';
+      if (mobileContainer) mobileContainer.innerHTML = '';
       if (emptyState) emptyState.classList.remove('hidden');
       return;
     }
 
     if (emptyState) emptyState.classList.add('hidden');
 
-    tbody.innerHTML = this._bulkStagedItems.map((item, index) => {
-      const stockDiffText = item.addStock > 0 ? `+${item.addStock}` : (item.addStock < 0 ? `${item.addStock}` : '0');
-      const stockDiffColor = item.addStock > 0 ? 'text-emerald-400' : (item.addStock < 0 ? 'text-rose-400' : 'text-slate-400');
+    // 1. Desktop Detailed Table
+    if (tbody) {
+      tbody.innerHTML = this._bulkStagedItems.map((item, index) => {
+        const stockDiffText = item.addStock > 0 ? `+${item.addStock}` : (item.addStock < 0 ? `${item.addStock}` : '0');
+        const stockDiffColor = item.addStock > 0 ? 'text-emerald-400' : (item.addStock < 0 ? 'text-rose-400' : 'text-slate-400');
 
-      return `
-        <tr class="border-b border-slate-800 hover:bg-slate-800/40 text-xs transition">
-          <td class="p-2.5 font-mono text-slate-500 text-center font-bold">${index + 1}</td>
-          <td class="p-2.5">
-            <div class="font-bold text-slate-100">${item.name}</div>
-            <div class="text-[10px] text-sky-400 font-mono mt-0.5">${item.sku}</div>
-          </td>
-          <td class="p-2.5 text-center font-mono text-slate-400">${item.oldStock} ${item.unit}</td>
-          <td class="p-2.5 text-center font-mono font-bold ${stockDiffColor}">${stockDiffText}</td>
-          <td class="p-2.5 text-center font-mono font-extrabold text-sky-300 bg-sky-950/30 rounded-lg">${item.newStock} ${item.unit}</td>
-          <td class="p-2.5 text-right font-mono font-bold text-emerald-400">${formatLKR(item.retailPrice)}</td>
-          <td class="p-2.5 text-right font-mono font-bold text-violet-400">${formatLKR(item.wholesalePrice)}</td>
-          <td class="p-2.5 text-right font-mono text-amber-400">${formatLKR(item.costPrice)}</td>
-          <td class="p-2.5 text-center">
-            <button onclick="InventoryManager.removeStagedItem(${index})" class="p-1.5 text-rose-400 hover:text-rose-300 hover:bg-rose-950/60 rounded-lg transition" title="ඉවත් කරන්න (Remove)">
-              🗑️
-            </button>
-          </td>
-        </tr>
-      `;
-    }).join('');
+        return `
+          <tr class="border-b border-slate-800 hover:bg-slate-800/40 text-xs transition">
+            <td class="p-2.5 font-mono text-slate-500 text-center font-bold">${index + 1}</td>
+            <td class="p-2.5">
+              <div class="font-bold text-slate-100">${item.name}</div>
+              <div class="text-[10px] text-sky-400 font-mono mt-0.5">${item.sku}</div>
+            </td>
+            <td class="p-2.5 text-center font-mono text-slate-400">${item.oldStock} ${item.unit}</td>
+            <td class="p-2.5 text-center font-mono font-bold ${stockDiffColor}">${stockDiffText}</td>
+            <td class="p-2.5 text-center font-mono font-extrabold text-sky-300 bg-sky-950/30 rounded-lg">${item.newStock} ${item.unit}</td>
+            <td class="p-2.5 text-right font-mono font-bold text-emerald-400">${formatLKR(item.retailPrice)}</td>
+            <td class="p-2.5 text-right font-mono font-bold text-violet-400">${formatLKR(item.wholesalePrice)}</td>
+            <td class="p-2.5 text-right font-mono text-amber-400">${formatLKR(item.costPrice)}</td>
+            <td class="p-2.5 text-center">
+              <button onclick="InventoryManager.removeStagedItem(${index})" class="p-1.5 text-rose-400 hover:text-rose-300 hover:bg-rose-950/60 rounded-lg transition" title="ඉවත් කරන්න (Remove)">
+                🗑️
+              </button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    // 2. Mobile Phone Touch Cards
+    if (mobileContainer) {
+      mobileContainer.innerHTML = this._bulkStagedItems.map((item, index) => {
+        const stockDiffText = item.addStock > 0 ? `+${item.addStock}` : (item.addStock < 0 ? `${item.addStock}` : '0');
+        const stockDiffColor = item.addStock > 0 ? 'text-emerald-400' : (item.addStock < 0 ? 'text-rose-400' : 'text-slate-400');
+
+        return `
+          <div class="p-3 bg-slate-900 border border-slate-800/80 rounded-2xl flex flex-col gap-2 shadow-sm">
+            <div class="flex items-start justify-between gap-2">
+              <div class="min-w-0 flex-1">
+                <div class="font-bold text-white text-xs sm:text-sm leading-snug">${index + 1}. ${item.name}</div>
+                <div class="text-[10px] text-sky-400 font-mono mt-0.5">${item.sku} &bull; ${item.unit}</div>
+              </div>
+              <button onclick="InventoryManager.removeStagedItem(${index})" class="p-1.5 text-rose-400 hover:text-rose-300 hover:bg-rose-950/60 rounded-xl transition shrink-0" title="ඉවත් කරන්න">
+                🗑️
+              </button>
+            </div>
+            <div class="grid grid-cols-3 gap-1.5 text-center text-xs">
+              <div class="p-1.5 bg-slate-950/80 rounded-xl border border-slate-800">
+                <div class="text-[9px] text-slate-400 font-medium">තොගය (Stock)</div>
+                <div class="font-mono text-[11px] font-bold text-slate-200 mt-0.5">${item.oldStock} <span class="${stockDiffColor}">(${stockDiffText})</span> &rarr; <strong class="text-sky-300 font-extrabold">${item.newStock}</strong></div>
+              </div>
+              <div class="p-1.5 bg-slate-950/80 rounded-xl border border-slate-800">
+                <div class="text-[9px] text-slate-400 font-medium">Retail මිල</div>
+                <div class="font-mono text-[11px] font-bold text-emerald-400 mt-0.5">${formatLKR(item.retailPrice)}</div>
+              </div>
+              <div class="p-1.5 bg-slate-950/80 rounded-xl border border-slate-800">
+                <div class="text-[9px] text-slate-400 font-medium">Cost මිල</div>
+                <div class="font-mono text-[11px] font-bold text-amber-400 mt-0.5">${formatLKR(item.costPrice)}</div>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
   },
 
   async saveBulkStockUpdate() {
