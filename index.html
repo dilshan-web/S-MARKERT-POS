@@ -5380,7 +5380,7 @@ input[type=number] {
               <label class="block text-emerald-400 font-bold mb-1 text-[11px]">➕ Add Stock (+තොගය)</label>
               <input id="bulkActiveAddStock" type="number" step="0.01" inputmode="decimal" placeholder="0"
                      oninput="InventoryManager.onBulkActiveAddStockChange()"
-                     onkeydown="if(event.key==='Enter'){event.preventDefault(); InventoryManager.addActiveProductToBatch();}"
+                     onkeydown="InventoryManager.handleBulkFieldKeydown(event, 'addStock')"
                      class="w-full p-2.5 sm:p-2 bg-slate-950 border border-emerald-600/70 rounded-xl text-emerald-300 font-mono font-bold text-center text-sm focus:border-emerald-400" />
               <div class="text-[10px] text-slate-400 mt-1 flex justify-between">
                 <span>නව තොගය:</span>
@@ -5391,7 +5391,7 @@ input[type=number] {
             <div>
               <label class="block text-sky-400 font-bold mb-1 text-[11px]">🏷️ Retail Price (මිල)</label>
               <input id="bulkActiveRetail" type="number" step="0.5" inputmode="decimal" placeholder="0.00"
-                     onkeydown="if(event.key==='Enter'){event.preventDefault(); InventoryManager.addActiveProductToBatch();}"
+                     onkeydown="InventoryManager.handleBulkFieldKeydown(event, 'retail')"
                      class="w-full p-2.5 sm:p-2 bg-slate-950 border border-sky-600/70 rounded-xl text-sky-300 font-mono font-bold text-center text-sm focus:border-sky-400" />
               <div class="text-[10px] text-slate-500 mt-1">Retail විකුණුම් මිල</div>
             </div>
@@ -5399,7 +5399,7 @@ input[type=number] {
             <div>
               <label class="block text-violet-400 font-bold mb-1 text-[11px]">📦 Wholesale Price</label>
               <input id="bulkActiveWholesale" type="number" step="0.5" inputmode="decimal" placeholder="0.00"
-                     onkeydown="if(event.key==='Enter'){event.preventDefault(); InventoryManager.addActiveProductToBatch();}"
+                     onkeydown="InventoryManager.handleBulkFieldKeydown(event, 'wholesale')"
                      class="w-full p-2.5 sm:p-2 bg-slate-950 border border-violet-600/70 rounded-xl text-violet-300 font-mono font-bold text-center text-sm focus:border-violet-400" />
               <div class="text-[10px] text-slate-500 mt-1">තොග විකුණුම් මිල</div>
             </div>
@@ -5407,7 +5407,7 @@ input[type=number] {
             <div>
               <label class="block text-amber-400 font-bold mb-1 text-[11px]">💰 Cost Price (මිලදී ගත්)</label>
               <input id="bulkActiveCost" type="number" step="0.5" inputmode="decimal" placeholder="0.00"
-                     onkeydown="if(event.key==='Enter'){event.preventDefault(); InventoryManager.addActiveProductToBatch();}"
+                     onkeydown="InventoryManager.handleBulkFieldKeydown(event, 'cost')"
                      class="w-full p-2.5 sm:p-2 bg-slate-950 border border-amber-600/70 rounded-xl text-amber-300 font-mono font-bold text-center text-sm focus:border-amber-400" />
               <div class="text-[10px] text-slate-500 mt-1">පිරිවැය / Cost</div>
             </div>

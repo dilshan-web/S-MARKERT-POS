@@ -102,17 +102,35 @@ const InventoryManager = {
       products = products.filter(p => p.expiryDate && new Date(p.expiryDate) < today);
     }
 
-    // Apply Search
+    // Apply Search strictly matching SKU, Name, Sinhala Name, or Barcodes
     if (this.searchQuery) {
       const q = this.searchQuery.toLowerCase().trim();
       products = products.filter(p =>
-        p.name.toLowerCase().includes(q) ||
+        (p.sku && p.sku.toLowerCase().includes(q)) ||
+        (p.name && p.name.toLowerCase().includes(q)) ||
         (p.nameSi && p.nameSi.toLowerCase().includes(q)) ||
-        p.sku.toLowerCase().includes(q) ||
-        (p.category && p.category.toLowerCase().includes(q)) ||
-        (p.brand && p.brand.toLowerCase().includes(q)) ||
         (p.barcodes && p.barcodes.some(b => b.toLowerCase().includes(q)))
       );
+
+      // Sort: exact SKU first, startsWith next, contains last
+      products.sort((a, b) => {
+        const aSkuExact = a.sku && a.sku.toLowerCase() === q;
+        const bSkuExact = b.sku && b.sku.toLowerCase() === q;
+        if (aSkuExact && !bSkuExact) return -1;
+        if (!aSkuExact && bSkuExact) return 1;
+
+        const aSkuStart = a.sku && a.sku.toLowerCase().startsWith(q);
+        const bSkuStart = b.sku && b.sku.toLowerCase().startsWith(q);
+        if (aSkuStart && !bSkuStart) return -1;
+        if (!aSkuStart && bSkuStart) return 1;
+
+        const aNameStart = a.name && a.name.toLowerCase().startsWith(q);
+        const bNameStart = b.name && b.name.toLowerCase().startsWith(q);
+        if (aNameStart && !bNameStart) return -1;
+        if (!aNameStart && bNameStart) return 1;
+
+        return 0;
+      });
     }
 
     if (products.length === 0) {
@@ -555,32 +573,61 @@ const InventoryManager = {
     await this.openBulkStockModal(productId);
   },
 
+  _bulkHighlightedIndex: -1,
+  _bulkCurrentMatches: [],
+
   async searchBulkProducts(query) {
     const resultsBox = document.getElementById('bulkStockSearchResults');
     if (!resultsBox) return;
     const q = (query || '').trim().toLowerCase();
     if (!q) {
+      this._bulkCurrentMatches = [];
+      this._bulkHighlightedIndex = -1;
       resultsBox.innerHTML = '';
       resultsBox.classList.add('hidden');
       return;
     }
 
     const all = await db.products.toArray();
-    const matches = all.filter(p =>
+    let matches = all.filter(p =>
       (p.sku && p.sku.toLowerCase().includes(q)) ||
       (p.name && p.name.toLowerCase().includes(q)) ||
       (p.nameSi && p.nameSi.toLowerCase().includes(q)) ||
       (p.barcodes && p.barcodes.some(b => b.toLowerCase().includes(q)))
-    ).slice(0, 10);
+    );
+
+    // Sort: exact SKU first, startsWith next, contains last
+    matches.sort((a, b) => {
+      const aSkuExact = a.sku && a.sku.toLowerCase() === q;
+      const bSkuExact = b.sku && b.sku.toLowerCase() === q;
+      if (aSkuExact && !bSkuExact) return -1;
+      if (!aSkuExact && bSkuExact) return 1;
+
+      const aSkuStart = a.sku && a.sku.toLowerCase().startsWith(q);
+      const bSkuStart = b.sku && b.sku.toLowerCase().startsWith(q);
+      if (aSkuStart && !bSkuStart) return -1;
+      if (!aSkuStart && bSkuStart) return 1;
+
+      const aNameStart = a.name && a.name.toLowerCase().startsWith(q);
+      const bNameStart = b.name && b.name.toLowerCase().startsWith(q);
+      if (aNameStart && !bNameStart) return -1;
+      if (!aNameStart && bNameStart) return 1;
+
+      return 0;
+    });
+
+    matches = matches.slice(0, 10);
+    this._bulkCurrentMatches = matches;
+    this._bulkHighlightedIndex = matches.length > 0 ? 0 : -1;
 
     if (matches.length === 0) {
-      resultsBox.innerHTML = `<div class="p-3 text-center text-slate-400 text-xs">කිසිදු භාණ්ඩයක් හමු නොවීය (No matching product)</div>`;
+      resultsBox.innerHTML = `<div class="p-3 text-center text-slate-400 text-xs">ගැලපෙන භාණ්ඩයක් හමු නොවීය (No matching product)</div>`;
       resultsBox.classList.remove('hidden');
       return;
     }
 
-    resultsBox.innerHTML = matches.map(p => `
-      <div onclick="InventoryManager.selectProductForBulkById(${p.id})" class="p-2.5 hover:bg-slate-800 rounded-xl cursor-pointer flex items-center justify-between text-xs border-b border-slate-800/80 last:border-none transition">
+    resultsBox.innerHTML = matches.map((p, idx) => `
+      <div id="bulk-result-item-${idx}" onclick="InventoryManager.selectProductForBulkById(${p.id})" class="bulk-search-row p-2.5 hover:bg-slate-800 rounded-xl cursor-pointer flex items-center justify-between text-xs border-b border-slate-800/80 last:border-none transition ${idx === 0 ? 'bg-violet-900/60 ring-1 ring-violet-500' : ''}">
         <div>
           <div class="font-bold text-white">${p.name}</div>
           <div class="text-[11px] text-sky-400 font-mono mt-0.5">${p.sku} ${p.nameSi ? '• ' + p.nameSi : ''}</div>
@@ -595,13 +642,65 @@ const InventoryManager = {
   },
 
   handleBulkSearchKeydown(event) {
+    if (!this._bulkCurrentMatches || this._bulkCurrentMatches.length === 0) return;
+    const total = this._bulkCurrentMatches.length;
+
+    if (event.key === 'ArrowDown' || event.key === 'ArrowRight') {
+      event.preventDefault();
+      this._bulkHighlightedIndex = (this._bulkHighlightedIndex + 1) % total;
+      this._updateBulkSearchHighlight();
+      return;
+    }
+
+    if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') {
+      event.preventDefault();
+      this._bulkHighlightedIndex = (this._bulkHighlightedIndex - 1 + total) % total;
+      this._updateBulkSearchHighlight();
+      return;
+    }
+
     if (event.key === 'Enter') {
       event.preventDefault();
-      const resultsBox = document.getElementById('bulkStockSearchResults');
-      const firstResult = resultsBox?.querySelector('[onclick]');
-      if (firstResult) {
-        firstResult.click();
+      if (this._bulkHighlightedIndex >= 0 && this._bulkCurrentMatches[this._bulkHighlightedIndex]) {
+        this.selectProductForBulk(this._bulkCurrentMatches[this._bulkHighlightedIndex]);
       }
+    }
+  },
+
+  _updateBulkSearchHighlight() {
+    const resultsBox = document.getElementById('bulkStockSearchResults');
+    if (!resultsBox) return;
+
+    resultsBox.querySelectorAll('.bulk-search-row').forEach(row => {
+      row.classList.remove('bg-violet-900/60', 'ring-1', 'ring-violet-500');
+    });
+
+    const activeRow = document.getElementById(`bulk-result-item-${this._bulkHighlightedIndex}`);
+    if (activeRow) {
+      activeRow.classList.add('bg-violet-900/60', 'ring-1', 'ring-violet-500');
+      activeRow.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  },
+
+  handleBulkFieldKeydown(event, currentField) {
+    // Arrow Navigation horizontally between the 4 active fields
+    if (event.key === 'ArrowRight') {
+      event.preventDefault();
+      if (currentField === 'addStock') document.getElementById('bulkActiveRetail')?.focus();
+      else if (currentField === 'retail') document.getElementById('bulkActiveWholesale')?.focus();
+      else if (currentField === 'wholesale') document.getElementById('bulkActiveCost')?.focus();
+      return;
+    }
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault();
+      if (currentField === 'cost') document.getElementById('bulkActiveWholesale')?.focus();
+      else if (currentField === 'wholesale') document.getElementById('bulkActiveRetail')?.focus();
+      else if (currentField === 'retail') document.getElementById('bulkActiveAddStock')?.focus();
+      return;
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      this.addActiveProductToBatch();
     }
   },
 

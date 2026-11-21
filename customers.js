@@ -243,7 +243,7 @@ const CustomerManager = {
     }
 
     container.innerHTML = customers.map(c => `
-      <div onclick="CustomerManager.selectCustomerForPOS(${c.id})" class="p-3 bg-slate-900 border ${c.isSchool || c.customerType === 'school' ? 'border-amber-500/70 bg-amber-950/20 hover:border-amber-400' : 'border-slate-700 hover:border-sky-500'} rounded-2xl cursor-pointer flex items-center justify-between transition shadow-sm">
+      <div onclick="CustomerManager.selectCustomerForPOS('${c.id}')" class="p-3 bg-slate-900 border ${c.isSchool || c.customerType === 'school' ? 'border-amber-500/70 bg-amber-950/20 hover:border-amber-400' : 'border-slate-700 hover:border-sky-500'} rounded-2xl cursor-pointer flex items-center justify-between transition shadow-sm">
         <div>
           <div class="font-extrabold text-slate-100 text-sm flex items-center gap-1.5 flex-wrap">
             <span>${c.name}</span>

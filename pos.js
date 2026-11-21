@@ -15,6 +15,8 @@ const POSManager = {
   taxRate: 0,
   currentCategory: 'all',
   searchQuery: '',
+  highlightedGridIndex: -1,
+  lastFilteredProducts: [],
   lastCompletedSale: null,
   mobileActiveSegment: 'products', // 'products' or 'cart'
 
@@ -131,12 +133,107 @@ const POSManager = {
     }, 40);
   },
 
-  // Handle Enter key on search box: invoice lookup, barcode scan or item selection
+  getGridColumns() {
+    const grid = document.getElementById('posProductGrid');
+    if (!grid) return 2;
+    try {
+      const computed = window.getComputedStyle(grid);
+      if (computed && computed.gridTemplateColumns) {
+        const parts = computed.gridTemplateColumns.trim().split(/\s+/);
+        if (parts.length > 0) return parts.length;
+      }
+    } catch (_) {}
+    const width = window.innerWidth;
+    if (width >= 1280) return 4;
+    if (width >= 640) return 3;
+    return 2;
+  },
+
+  navigateGridHighlight(key) {
+    if (!this.lastFilteredProducts || this.lastFilteredProducts.length === 0) return;
+    const total = this.lastFilteredProducts.length;
+    const cols = this.getGridColumns();
+
+    if (this.highlightedGridIndex < 0) {
+      this.highlightedGridIndex = 0;
+    } else {
+      if (key === 'ArrowRight') {
+        this.highlightedGridIndex = (this.highlightedGridIndex + 1) % total;
+      } else if (key === 'ArrowLeft') {
+        this.highlightedGridIndex = (this.highlightedGridIndex - 1 + total) % total;
+      } else if (key === 'ArrowDown') {
+        if (this.highlightedGridIndex + cols < total) {
+          this.highlightedGridIndex += cols;
+        } else if (this.highlightedGridIndex < total - 1) {
+          this.highlightedGridIndex = this.highlightedGridIndex + 1;
+        } else {
+          this.highlightedGridIndex = 0; // wrap to first item
+        }
+      } else if (key === 'ArrowUp') {
+        if (this.highlightedGridIndex - cols >= 0) {
+          this.highlightedGridIndex -= cols;
+        } else if (this.highlightedGridIndex > 0) {
+          this.highlightedGridIndex = this.highlightedGridIndex - 1;
+        } else {
+          this.highlightedGridIndex = total - 1; // wrap to last item
+        }
+      }
+    }
+
+    this.updateGridHighlightVisual();
+  },
+
+  updateGridHighlightVisual() {
+    const grid = document.getElementById('posProductGrid');
+    if (!grid) return;
+
+    grid.querySelectorAll('.pos-product-card').forEach((card, idx) => {
+      const isHighlighted = idx === this.highlightedGridIndex;
+      card.classList.toggle('ring-2', isHighlighted);
+      card.classList.toggle('sm:ring-4', isHighlighted);
+      card.classList.toggle('ring-sky-400', isHighlighted);
+      card.classList.toggle('border-sky-400', isHighlighted);
+      card.classList.toggle('bg-sky-950/90', isHighlighted);
+      card.classList.toggle('scale-[1.02]', isHighlighted);
+      card.classList.toggle('shadow-lg', isHighlighted);
+      card.classList.toggle('shadow-sky-500/25', isHighlighted);
+
+      const pill = card.querySelector('.pos-enter-pill');
+      if (pill) {
+        if (isHighlighted) pill.classList.remove('hidden');
+        else pill.classList.add('hidden');
+      }
+    });
+
+    const activeCard = document.getElementById(`pos-grid-item-${this.highlightedGridIndex}`);
+    if (activeCard && typeof activeCard.scrollIntoView === 'function') {
+      activeCard.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  },
+
+  // Handle Arrow navigation & Enter key on search box: fast product select, invoice lookup, barcode scan
   async handleSearchKeydown(e) {
+    // Arrow Key Navigation in Product Grid (Up, Down, Left, Right)
+    if (['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+      if (this.lastFilteredProducts && this.lastFilteredProducts.length > 0) {
+        e.preventDefault();
+        this.navigateGridHighlight(e.key);
+        return;
+      }
+    }
+
     if (e.key === 'Enter') {
       e.preventDefault();
       const input = document.getElementById('posSearchInput');
       const query = (input ? input.value : this.searchQuery || '').trim();
+
+      // If user has highlighted an item in the grid (via arrows or top match)
+      if (this.highlightedGridIndex >= 0 && this.lastFilteredProducts && this.lastFilteredProducts[this.highlightedGridIndex]) {
+        const selectedProd = this.lastFilteredProducts[this.highlightedGridIndex];
+        await this.addProduct(selectedProd, 1);
+        this.clearSearchInputAndRefocus();
+        return;
+      }
 
       // Empty search + Enter → go to price field of last added item
       if (!query) {
@@ -165,33 +262,18 @@ const POSManager = {
         const q = query.toLowerCase();
         // Exact SKU/barcode match in filtered list first
         const exactInGrid = this.lastFilteredProducts.find(p =>
-          p.sku === query ||
-          (p.barcodes && p.barcodes.includes(query))
+          (p.sku && p.sku.toLowerCase() === q) ||
+          (p.barcodes && p.barcodes.some(b => b.toLowerCase() === q))
         );
         if (exactInGrid) {
           await this.addProduct(exactInGrid, 1);
           this.clearSearchInputAndRefocus();
           return;
         }
-        // If only 1 product showing in grid → add it directly
-        if (this.lastFilteredProducts.length === 1) {
-          await this.addProduct(this.lastFilteredProducts[0], 1);
-          this.clearSearchInputAndRefocus();
-          return;
-        }
-        // Multiple matches → find best name/sku match
-        const bestMatch = this.lastFilteredProducts.find(p =>
-          p.name.toLowerCase().includes(q) ||
-          (p.nameSi && p.nameSi.toLowerCase().includes(q)) ||
-          p.sku.toLowerCase().includes(q) ||
-          (p.brand && p.brand.toLowerCase().includes(q)) ||
-          (p.barcodes && p.barcodes.some(b => b.toLowerCase().includes(q)))
-        );
-        if (bestMatch) {
-          await this.addProduct(bestMatch, 1);
-          this.clearSearchInputAndRefocus();
-          return;
-        }
+        // First matched product in filtered list
+        await this.addProduct(this.lastFilteredProducts[0], 1);
+        this.clearSearchInputAndRefocus();
+        return;
       }
 
       // 2. Fallback: Exact Barcode or SKU match from DB
@@ -212,10 +294,9 @@ const POSManager = {
       const q2 = query.toLowerCase();
       const allProducts = await db.products.toArray();
       const match = allProducts.find(p =>
-        p.name.toLowerCase().includes(q2) ||
+        (p.name && p.name.toLowerCase().includes(q2)) ||
         (p.nameSi && p.nameSi.toLowerCase().includes(q2)) ||
-        p.sku.toLowerCase().includes(q2) ||
-        (p.brand && p.brand.toLowerCase().includes(q2)) ||
+        (p.sku && p.sku.toLowerCase().includes(q2)) ||
         (p.barcodes && p.barcodes.some(b => b.toLowerCase().includes(q2)))
       );
 
@@ -232,6 +313,7 @@ const POSManager = {
 
   clearSearchInputAndRefocus() {
     this.searchQuery = '';
+    this.highlightedGridIndex = -1;
     const input = document.getElementById('posSearchInput');
     if (input) input.value = '';
     this.renderProductGrid();
@@ -1090,15 +1172,40 @@ const POSManager = {
       items = items.filter(p => p.category === this.currentCategory);
     }
 
+    // Apply strict search matching SKU, Name, Sinhala Name, or Barcode ONLY
     if (this.searchQuery) {
       const q = this.searchQuery.toLowerCase().trim();
       items = items.filter(p =>
-        p.name.toLowerCase().includes(q) ||
+        (p.sku && p.sku.toLowerCase().includes(q)) ||
+        (p.name && p.name.toLowerCase().includes(q)) ||
         (p.nameSi && p.nameSi.toLowerCase().includes(q)) ||
-        p.sku.toLowerCase().includes(q) ||
-        (p.brand && p.brand.toLowerCase().includes(q)) ||
         (p.barcodes && p.barcodes.some(b => b.toLowerCase().includes(q)))
       );
+
+      // Relevance sort: exact SKU/barcode > startsWith SKU > startsWith Name > startsWith NameSi > contains
+      items.sort((a, b) => {
+        const aSkuExact = (a.sku && a.sku.toLowerCase() === q) || (a.barcodes && a.barcodes.some(code => code.toLowerCase() === q));
+        const bSkuExact = (b.sku && b.sku.toLowerCase() === q) || (b.barcodes && b.barcodes.some(code => code.toLowerCase() === q));
+        if (aSkuExact && !bSkuExact) return -1;
+        if (!aSkuExact && bSkuExact) return 1;
+
+        const aSkuStart = a.sku && a.sku.toLowerCase().startsWith(q);
+        const bSkuStart = b.sku && b.sku.toLowerCase().startsWith(q);
+        if (aSkuStart && !bSkuStart) return -1;
+        if (!aSkuStart && bSkuStart) return 1;
+
+        const aNameStart = a.name && a.name.toLowerCase().startsWith(q);
+        const bNameStart = b.name && b.name.toLowerCase().startsWith(q);
+        if (aNameStart && !bNameStart) return -1;
+        if (!aNameStart && bNameStart) return 1;
+
+        const aNameSiStart = a.nameSi && a.nameSi.toLowerCase().startsWith(q);
+        const bNameSiStart = b.nameSi && b.nameSi.toLowerCase().startsWith(q);
+        if (aNameSiStart && !bNameSiStart) return -1;
+        if (!aNameSiStart && bNameSiStart) return 1;
+
+        return 0;
+      });
     }
 
     if (!items || items.length === 0) {
@@ -1109,21 +1216,39 @@ const POSManager = {
         </div>
       `;
       this.lastFilteredProducts = [];
+      this.highlightedGridIndex = -1;
       return;
     }
 
-    // Cache filtered list so Enter key can use it instantly (no extra DB call)
+    // Cache filtered list so Enter key and Arrow navigation can use it instantly
     this.lastFilteredProducts = items;
 
-    grid.innerHTML = items.map(p => {
+    // Auto-highlight first matching item when user searches
+    if (this.searchQuery && this.searchQuery.trim().length > 0) {
+      this.highlightedGridIndex = 0;
+    } else {
+      this.highlightedGridIndex = -1;
+    }
+
+    grid.innerHTML = items.map((p, idx) => {
       const minThreshold = Number(p.minStock) || 0;
       const isLow = minThreshold > 0 && p.currentStock <= minThreshold && p.currentStock > 0;
       const isOut = p.currentStock <= 0;
       const wsPrice = p.wholesalePrice || p.sellingPrice;
+      const isHighlighted = idx === this.highlightedGridIndex;
 
       return `
-        <div onclick="POSManager.addProductById(${p.id})"
-             class="group relative bg-slate-800/80 hover:bg-slate-750 active:scale-[0.97] border border-slate-700/80 hover:border-sky-500 rounded-2xl p-2.5 sm:p-3 flex flex-col justify-between cursor-pointer transition-all duration-150 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-sky-950/40 select-none">
+        <div id="pos-grid-item-${idx}"
+             onclick="POSManager.addProductById(${p.id})"
+             class="pos-product-card group relative bg-slate-800/80 hover:bg-slate-750 active:scale-[0.97] border ${
+               isHighlighted ? 'ring-2 sm:ring-4 ring-sky-400 border-sky-400 bg-sky-950/90 scale-[1.02] shadow-lg shadow-sky-500/25' : 'border-slate-700/80 hover:border-sky-500'
+             } rounded-2xl p-2.5 sm:p-3 flex flex-col justify-between cursor-pointer transition-all duration-150 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-sky-950/40 select-none">
+          
+          <!-- Enter Shortcut Pill -->
+          <span class="pos-enter-pill absolute top-1.5 right-1.5 bg-sky-500 text-slate-950 text-[9px] font-black px-1.5 py-0.5 rounded-full shadow animate-pulse ${
+            isHighlighted ? '' : 'hidden'
+          }">↵ ENTER</span>
+
           <div>
             <div class="flex items-start justify-between gap-1 mb-1">
               <span class="text-[9px] sm:text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-slate-700/80 text-slate-300">
