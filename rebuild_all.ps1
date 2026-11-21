@@ -380,31 +380,20 @@ if ($baseHtml.Contains($quickLoginButtonsBlock)) {
     Write-Host "  [-] Removed 3 Quick One-Click Login buttons from Login Form as requested" -ForegroundColor Yellow
 }
 
-# Ensure input text is bright white and crystal clear
-$oldLoginU = 'id="loginUsernameInput" type="text" data-i18n-placeholder="usernamePlaceholder" placeholder="Username / PIN"'
-$newLoginU = 'id="loginUsernameInput" type="text" data-i18n-placeholder="usernamePlaceholder" placeholder="Username / PIN" style="color: #ffffff !important; -webkit-text-fill-color: #ffffff !important; background-color: #020617 !important; font-size: 13px !important;"'
-if ($baseHtml.Contains($oldLoginU)) {
-    $baseHtml = $baseHtml.Replace($oldLoginU, $newLoginU)
-}
-
-$oldLoginP = 'id="loginPasswordInput" type="password" placeholder="••••••••"'
-$newLoginP = 'id="loginPasswordInput" type="password" placeholder="••••••••" style="color: #ffffff !important; -webkit-text-fill-color: #ffffff !important; background-color: #020617 !important; font-size: 13px !important;"'
-if ($baseHtml.Contains($oldLoginP)) {
-    $baseHtml = $baseHtml.Replace($oldLoginP, $newLoginP)
-}
-
-# Add autofill fix in <head>
+# Ensure input styling in <head> for crisp white visible text & autofill
 $autofillCss = @'
 <style>
 input#loginUsernameInput, input#loginPasswordInput {
   color: #ffffff !important;
   -webkit-text-fill-color: #ffffff !important;
-  background-color: #020617 !important;
+  background-color: #0f172a !important;
+  font-size: 14px !important;
+  caret-color: #38bdf8 !important;
 }
 input#loginUsernameInput:-webkit-autofill,
 input#loginPasswordInput:-webkit-autofill {
   -webkit-text-fill-color: #ffffff !important;
-  -webkit-box-shadow: 0 0 0px 1000px #020617 inset !important;
+  -webkit-box-shadow: 0 0 0px 1000px #0f172a inset !important;
   transition: background-color 5000s ease-in-out 0s;
 }
 </style>
@@ -602,6 +591,174 @@ $modularScripts = @'
 </body>
 </html>
 '@
+
+# =========================================================================
+# 6.4 Inject Bulk Stock Update Modal (before modularScripts/</body>)
+# =========================================================================
+$bulkStockModalHtml = @'
+  <!-- ================================================================ -->
+  <!-- BULK STOCK & PRICE BATCH UPDATE MODAL                           -->
+  <!-- ================================================================ -->
+  <div id="bulkStockModal" class="app-modal fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 hidden">
+    <div class="w-full max-w-4xl bg-slate-900 border border-violet-600/70 rounded-3xl shadow-2xl flex flex-col overflow-hidden" style="max-height: 92vh;">
+      
+      <!-- Modal Header -->
+      <div class="flex items-center justify-between px-5 py-3.5 bg-slate-900 border-b border-slate-800 shrink-0">
+        <div>
+          <h3 class="text-sm font-extrabold text-white flex items-center gap-2">
+            <span class="text-base">📋</span> <span>Bulk Stock &amp; Price Intake (තොග සහ මිල ගණන් Batch Update)</span>
+          </h3>
+          <p class="text-[11px] text-slate-400 mt-0.5">SKU / Barcode හෝ නමෙන් සොයා, අලුත් තොග/මිල දමා 'Add to Batch' කරන්න &rarr; අවසානයේ 'Save All' ඔබන්න.</p>
+        </div>
+        <button onclick="document.getElementById('bulkStockModal').classList.add('hidden')" class="text-slate-400 hover:text-white text-xl font-bold w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-800 transition">&times;</button>
+      </div>
+
+      <!-- Top Search & Active Item Bar -->
+      <div class="p-4 bg-slate-950/80 border-b border-slate-800/80 shrink-0 space-y-3">
+        
+        <!-- Live Product Search Bar -->
+        <div class="relative">
+          <label class="block text-slate-300 font-bold text-xs mb-1">🔍 භාණ්ඩය SKU / Barcode / නමින් සොයන්න (Search Product):</label>
+          <div class="relative">
+            <input id="bulkStockSearchInput" type="text" autocomplete="off"
+                   placeholder="Type SKU (e.g. KEERI-01) or scan barcode or product name..."
+                   oninput="InventoryManager.searchBulkProducts(this.value)"
+                   onkeydown="InventoryManager.handleBulkSearchKeydown(event)"
+                   class="w-full pl-9 pr-4 py-2.5 bg-slate-900 border border-violet-700/60 rounded-xl text-white text-xs placeholder-slate-500 focus:outline-none focus:border-violet-400 focus:ring-1 focus:ring-violet-400 font-medium" />
+            <svg class="w-4 h-4 absolute left-3 top-3 text-violet-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+          </div>
+
+          <!-- Dropdown Search Results -->
+          <div id="bulkStockSearchResults" class="hidden absolute left-0 right-0 top-full mt-1 bg-slate-900 border border-violet-700/80 rounded-2xl shadow-2xl max-h-56 overflow-y-auto z-50 divide-y divide-slate-800 text-xs"></div>
+        </div>
+
+        <!-- Active Product Input Card (Visible once product is picked) -->
+        <div id="bulkActiveProductPanel" class="hidden bg-slate-900/90 border border-violet-600/60 rounded-2xl p-3.5 space-y-3">
+          
+          <!-- Product Name & Current Stock Banner -->
+          <div class="flex items-center justify-between pb-2 border-b border-slate-800 flex-wrap gap-2">
+            <div>
+              <div id="bulkActiveName" class="font-extrabold text-sm text-white">Product Name</div>
+              <div id="bulkActiveSku" class="text-[11px] text-sky-400 font-mono mt-0.5">SKU: ---</div>
+            </div>
+            <div class="flex items-center gap-3">
+              <div class="px-3 py-1 bg-slate-800 rounded-xl border border-slate-700 text-xs">
+                <span class="text-slate-400">දැනට තොගය: </span>
+                <strong id="bulkActiveCurrentStock" class="font-mono text-emerald-400 font-bold">0</strong>
+              </div>
+            </div>
+          </div>
+
+          <!-- 4 Fields: Add Stock, Retail, Wholesale, Cost -->
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+            <div>
+              <label class="block text-emerald-400 font-bold mb-1">➕ Add Stock (+තොගය)</label>
+              <input id="bulkActiveAddStock" type="number" step="0.01" placeholder="0"
+                     oninput="InventoryManager.onBulkActiveAddStockChange()"
+                     onkeydown="if(event.key==='Enter'){event.preventDefault(); InventoryManager.addActiveProductToBatch();}"
+                     class="w-full p-2 bg-slate-950 border border-emerald-600/70 rounded-xl text-emerald-300 font-mono font-bold text-center text-xs focus:border-emerald-400" />
+              <div class="text-[10px] text-slate-400 mt-1 flex justify-between">
+                <span>නව තොගය:</span>
+                <span id="bulkActiveNewStockPreview" class="font-mono font-bold text-slate-300 text-[11px]">0</span>
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-sky-400 font-bold mb-1">🏷️ Retail Price (මිල)</label>
+              <input id="bulkActiveRetail" type="number" step="0.5" placeholder="0.00"
+                     onkeydown="if(event.key==='Enter'){event.preventDefault(); InventoryManager.addActiveProductToBatch();}"
+                     class="w-full p-2 bg-slate-950 border border-sky-600/70 rounded-xl text-sky-300 font-mono font-bold text-center text-xs focus:border-sky-400" />
+              <div class="text-[10px] text-slate-500 mt-1">Retail විකුණුම් මිල</div>
+            </div>
+
+            <div>
+              <label class="block text-violet-400 font-bold mb-1">📦 Wholesale Price</label>
+              <input id="bulkActiveWholesale" type="number" step="0.5" placeholder="0.00"
+                     onkeydown="if(event.key==='Enter'){event.preventDefault(); InventoryManager.addActiveProductToBatch();}"
+                     class="w-full p-2 bg-slate-950 border border-violet-600/70 rounded-xl text-violet-300 font-mono font-bold text-center text-xs focus:border-violet-400" />
+              <div class="text-[10px] text-slate-500 mt-1">තොග විකුණුම් මිල</div>
+            </div>
+
+            <div>
+              <label class="block text-amber-400 font-bold mb-1">💰 Cost Price (මිලදී ගත්)</label>
+              <input id="bulkActiveCost" type="number" step="0.5" placeholder="0.00"
+                     onkeydown="if(event.key==='Enter'){event.preventDefault(); InventoryManager.addActiveProductToBatch();}"
+                     class="w-full p-2 bg-slate-950 border border-amber-600/70 rounded-xl text-amber-300 font-mono font-bold text-center text-xs focus:border-amber-400" />
+              <div class="text-[10px] text-slate-500 mt-1">පිරිවැය / Cost</div>
+            </div>
+          </div>
+
+          <!-- Add to Batch Action Button -->
+          <div class="flex items-center justify-between pt-1">
+            <span class="text-[11px] text-slate-400">අගයන් වෙනස් කර 'Add to Batch' click කරන්න (හෝ Enter ඔබන්න)</span>
+            <div class="flex items-center gap-2">
+              <button type="button" onclick="InventoryManager._resetBulkProductForm()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-xl text-xs font-semibold transition">Cancel</button>
+              <button type="button" onclick="InventoryManager.addActiveProductToBatch()" class="px-4 py-2 bg-gradient-to-r from-violet-600 to-sky-600 hover:from-violet-500 hover:to-sky-500 text-white rounded-xl text-xs font-extrabold transition shadow-md shadow-violet-700/30 flex items-center gap-1.5 cursor-pointer">
+                <span>➕</span> <span>ලැයිස්තුවට එක් කරන්න (Add to Batch)</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Staged Batch Table Header & Status -->
+      <div class="px-5 py-2.5 bg-slate-900 border-b border-slate-800 shrink-0 flex items-center justify-between text-xs">
+        <div class="flex items-center gap-2">
+          <span class="font-extrabold text-white">📋 Staged Batch List:</span>
+          <span id="bulkStagedCountBadge" class="px-2 py-0.5 rounded-full text-[10px] font-black bg-violet-950 text-violet-300 border border-violet-700">0 Items</span>
+        </div>
+        <button type="button" onclick="InventoryManager.clearAllStagedItems()" class="text-rose-400 hover:text-rose-300 text-xs font-semibold hover:underline">Clear List</button>
+      </div>
+
+      <!-- Staged Table Body -->
+      <div class="flex-1 overflow-y-auto p-2">
+        <table class="w-full text-xs">
+          <thead class="sticky top-0 bg-slate-900 z-10">
+            <tr class="text-slate-400 uppercase text-[10px] font-bold border-b border-slate-800">
+              <th class="p-2.5 text-center w-10">#</th>
+              <th class="p-2.5 text-left">Item / SKU</th>
+              <th class="p-2.5 text-center w-24">Current Stock</th>
+              <th class="p-2.5 text-center w-24">Add Stock</th>
+              <th class="p-2.5 text-center w-24">New Stock</th>
+              <th class="p-2.5 text-right w-24">Retail (Rs.)</th>
+              <th class="p-2.5 text-right w-24">Wholesale</th>
+              <th class="p-2.5 text-right w-24">Cost</th>
+              <th class="p-2.5 text-center w-12"></th>
+            </tr>
+          </thead>
+          <tbody id="bulkStockStagedTableBody"></tbody>
+        </table>
+
+        <!-- Empty State -->
+        <div id="bulkStockStagedEmpty" class="py-12 flex flex-col items-center justify-center text-slate-500 text-xs">
+          <div class="text-3xl mb-2">📋</div>
+          <div class="font-bold text-slate-400 text-sm">ලැයිස්තුව හිස්ය (Batch List is Empty)</div>
+          <div class="text-[11px] mt-1 text-slate-500">ඉහත Search කොටුවෙන් භාණ්ඩ සොයා, අගයන් දමා 'Add to Batch' ඔබන්න.</div>
+        </div>
+      </div>
+
+      <!-- Modal Footer -->
+      <div class="px-5 py-3.5 bg-slate-950 border-t border-slate-800 shrink-0 flex items-center justify-between gap-3">
+        <div class="text-xs text-slate-500">* 'Save All' ඔබන තුරු තොග සහ මිල වෙනස්කම් Database එකට සුරැකෙන්නේ නැත.</div>
+        <div class="flex items-center gap-2">
+          <button type="button" onclick="document.getElementById('bulkStockModal').classList.add('hidden')" class="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-bold text-xs transition">Cancel</button>
+          <button id="bulkStockSaveAllBtn" type="button" disabled onclick="InventoryManager.saveBulkStockUpdate()" class="px-6 py-2.5 bg-slate-800 text-slate-500 rounded-xl font-extrabold text-sm transition cursor-not-allowed">
+            💾 Save All Changes (සියල්ල Save කරන්න)
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+'@
+
+if (-not $baseHtml.Contains('bulkStockModal')) {
+    $baseHtml = $baseHtml + "`n" + $bulkStockModalHtml
+    Write-Host "  [+] Injected Bulk Stock Update modal" -ForegroundColor Green
+} else {
+    Write-Host "  [i] Bulk Stock modal already present" -ForegroundColor DarkGray
+}
 
 # Generate index.html (Primary entry for GitHub Pages & Web hosting)
 $indexHtml = $baseHtml + "`n" + $modularScripts

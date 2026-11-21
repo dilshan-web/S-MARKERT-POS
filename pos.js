@@ -524,6 +524,10 @@ const POSManager = {
     this.renderCart();
   },
 
+  updateCustomerSelectionUI() {
+    this.renderCustomerWidget();
+  },
+
   removeCustomer() {
     this.selectedCustomer = null;
     this.renderCustomerWidget();
@@ -665,19 +669,27 @@ const POSManager = {
     if (!custContainer) return;
 
     if (this.selectedCustomer) {
+      const isSchool = this.selectedCustomer.isSchool || this.selectedCustomer.customerType === 'school' || (this.selectedCustomer.schoolName && this.selectedCustomer.schoolName.trim() !== '');
+      const schoolBadge = isSchool ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-950 text-amber-300 border border-amber-600">🏫 ${this.selectedCustomer.schoolName || 'පාසල් ණය'}</span>` : '';
+      const initial = (this.selectedCustomer.name || 'C').charAt(0).toUpperCase();
+
       custContainer.innerHTML = `
         <div class="flex items-center justify-between p-2.5 bg-sky-950/40 border border-sky-800/60 rounded-xl">
           <div class="flex items-center gap-2">
-            <div class="w-8 h-8 rounded-full bg-sky-600 flex items-center justify-center font-bold text-white text-xs">
-              ${this.selectedCustomer.name.charAt(0)}
+            <div class="w-8 h-8 rounded-full bg-sky-600 flex items-center justify-center font-bold text-white text-xs shrink-0">
+              ${initial}
             </div>
             <div>
-              <div class="text-xs font-bold text-sky-200">${this.selectedCustomer.name} (${this.selectedCustomer.phone})</div>
-              <div class="text-[11px] text-slate-300 font-mono">Credit Balance: <strong class="${(this.selectedCustomer.creditBalance || 0) > 0 ? 'text-rose-400' : 'text-emerald-400'}">${formatLKR(this.selectedCustomer.creditBalance || 0)}</strong></div>
+              <div class="text-xs font-bold text-sky-200 flex items-center gap-1.5 flex-wrap">
+                <span>${this.selectedCustomer.name || 'Customer'}</span>
+                ${schoolBadge}
+                <span class="text-slate-400 font-normal">(${this.selectedCustomer.phone || 'No phone'})</span>
+              </div>
+              <div class="text-[11px] text-slate-300 font-mono">Credit Balance: <strong class="${(this.selectedCustomer.creditBalance || 0) > 0 ? 'text-rose-400 font-bold' : 'text-emerald-400'}">${formatLKR(this.selectedCustomer.creditBalance || 0)}</strong></div>
             </div>
           </div>
           <div class="flex items-center gap-1.5">
-            <button onclick="POSManager.removeCustomer()" class="text-slate-400 hover:text-rose-400 text-xs p-1" title="Detach Customer">&times;</button>
+            <button onclick="POSManager.removeCustomer()" class="text-slate-400 hover:text-rose-400 text-base p-1 leading-none" title="Detach Customer">&times;</button>
           </div>
         </div>
       `;

@@ -4961,6 +4961,10 @@ const POSManager = {
     this.renderCart();
   },
 
+  updateCustomerSelectionUI() {
+    this.renderCustomerWidget();
+  },
+
   removeCustomer() {
     this.selectedCustomer = null;
     this.renderCustomerWidget();
@@ -5102,19 +5106,27 @@ const POSManager = {
     if (!custContainer) return;
 
     if (this.selectedCustomer) {
+      const isSchool = this.selectedCustomer.isSchool || this.selectedCustomer.customerType === 'school' || (this.selectedCustomer.schoolName && this.selectedCustomer.schoolName.trim() !== '');
+      const schoolBadge = isSchool ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-950 text-amber-300 border border-amber-600">🏫 ${this.selectedCustomer.schoolName || 'පාසල් ණය'}</span>` : '';
+      const initial = (this.selectedCustomer.name || 'C').charAt(0).toUpperCase();
+
       custContainer.innerHTML = `
         <div class="flex items-center justify-between p-2.5 bg-sky-950/40 border border-sky-800/60 rounded-xl">
           <div class="flex items-center gap-2">
-            <div class="w-8 h-8 rounded-full bg-sky-600 flex items-center justify-center font-bold text-white text-xs">
-              ${this.selectedCustomer.name.charAt(0)}
+            <div class="w-8 h-8 rounded-full bg-sky-600 flex items-center justify-center font-bold text-white text-xs shrink-0">
+              ${initial}
             </div>
             <div>
-              <div class="text-xs font-bold text-sky-200">${this.selectedCustomer.name} (${this.selectedCustomer.phone})</div>
-              <div class="text-[11px] text-slate-300 font-mono">Credit Balance: <strong class="${(this.selectedCustomer.creditBalance || 0) > 0 ? 'text-rose-400' : 'text-emerald-400'}">${formatLKR(this.selectedCustomer.creditBalance || 0)}</strong></div>
+              <div class="text-xs font-bold text-sky-200 flex items-center gap-1.5 flex-wrap">
+                <span>${this.selectedCustomer.name || 'Customer'}</span>
+                ${schoolBadge}
+                <span class="text-slate-400 font-normal">(${this.selectedCustomer.phone || 'No phone'})</span>
+              </div>
+              <div class="text-[11px] text-slate-300 font-mono">Credit Balance: <strong class="${(this.selectedCustomer.creditBalance || 0) > 0 ? 'text-rose-400 font-bold' : 'text-emerald-400'}">${formatLKR(this.selectedCustomer.creditBalance || 0)}</strong></div>
             </div>
           </div>
           <div class="flex items-center gap-1.5">
-            <button onclick="POSManager.removeCustomer()" class="text-slate-400 hover:text-rose-400 text-xs p-1" title="Detach Customer">&times;</button>
+            <button onclick="POSManager.removeCustomer()" class="text-slate-400 hover:text-rose-400 text-base p-1 leading-none" title="Detach Customer">&times;</button>
           </div>
         </div>
       `;
@@ -6961,7 +6973,7 @@ const InventoryManager = {
             <button onclick="InventoryManager.openStockAdjustmentModal(${p.id})" class="p-1.5 bg-slate-800 hover:bg-amber-600 text-slate-300 hover:text-white rounded-lg transition" title="Adjust Stock">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/></svg>
             </button>
-            <button onclick="InventoryManager.openQuickStockModal(${p.id})" class="p-1.5 bg-slate-800 hover:bg-emerald-600 text-slate-300 hover:text-white rounded-lg transition" title="Quick Stock & Price Update">⚡</button>
+            <button onclick="InventoryManager.openBulkStockModal(${p.id})" class="p-1.5 bg-slate-800 hover:bg-violet-600 text-violet-300 hover:text-white rounded-lg transition" title="Bulk Stock & Price Update">📋</button>
             <button onclick="InventoryManager.openEditProductModal(${p.id})" class="p-1.5 bg-slate-800 hover:bg-sky-600 text-slate-300 hover:text-white rounded-lg transition" title="Edit Product">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
             </button>
@@ -7304,54 +7316,43 @@ const InventoryManager = {
       document.body.classList.remove('printing-barcodes');
     }, 1000);
   },
-  async openQuickStockModal(productId) {
-    let product = null;
-    if (productId) {
-      product = await db.products.get(productId);
-    }
-    const modal = document.getElementById('quickStockModal');
+  // ============================================================
+  // BULK STOCK UPDATE (BATCH STAGING WORKFLOW)
+  // SKU / Barcode / Name Search -> Add to Batch -> Staged Table -> Save All
+  // ============================================================
+  _bulkStagedItems: [],
+  _bulkActiveProduct: null,
+
+  async openBulkStockModal(presetProductId = null) {
+    const modal = document.getElementById('bulkStockModal');
     if (!modal) return;
+    this._bulkStagedItems = [];
+    this._bulkActiveProduct = null;
+    this._renderBulkStagedTable();
+    this._resetBulkProductForm();
 
-    const idInput = document.getElementById('quickStockProductId');
-    const nameEl = document.getElementById('quickStockProductName');
-    const currEl = document.getElementById('quickStockCurrentDisplay');
-    const addInput = document.getElementById('quickStockAddInput');
-    const retailInput = document.getElementById('quickStockRetailInput');
-    const wholesaleInput = document.getElementById('quickStockWholesaleInput');
-    const costInput = document.getElementById('quickStockCostInput');
-    const previewContainer = document.getElementById('quickStockNewTotalPreview');
-    const searchInput = document.getElementById('quickStockSearchInput');
-
+    const searchInput = document.getElementById('bulkStockSearchInput');
     if (searchInput) searchInput.value = '';
-    const searchResults = document.getElementById('quickStockSearchResults');
-    if (searchResults) { searchResults.innerHTML = ''; searchResults.classList.add('hidden'); }
+    const resultsBox = document.getElementById('bulkStockSearchResults');
+    if (resultsBox) { resultsBox.innerHTML = ''; resultsBox.classList.add('hidden'); }
 
-    if (product) {
-      if (idInput) idInput.value = product.id;
-      if (nameEl) nameEl.textContent = `${product.name} (${product.sku})`;
-      if (currEl) currEl.textContent = `${product.currentStock || 0} ${product.unit || 'unit'}`;
-      if (addInput) addInput.value = '';
-      if (retailInput) retailInput.value = product.sellingPrice || 0;
-      if (wholesaleInput) wholesaleInput.value = product.wholesalePrice || product.sellingPrice || 0;
-      if (costInput) costInput.value = product.costPrice || 0;
-      if (previewContainer) previewContainer.classList.add('hidden');
-    } else {
-      if (idInput) idInput.value = '';
-      if (nameEl) nameEl.textContent = 'Please search a product...';
-      if (currEl) currEl.textContent = '0';
-      if (addInput) addInput.value = '';
-      if (retailInput) retailInput.value = '';
-      if (wholesaleInput) wholesaleInput.value = '';
-      if (costInput) costInput.value = '';
-      if (previewContainer) previewContainer.classList.add('hidden');
-    }
     modal.classList.remove('hidden');
-    if (searchInput && !product) searchInput.focus();
-    else if (addInput) addInput.focus();
+
+    if (presetProductId) {
+      const p = await db.products.get(presetProductId);
+      if (p) this.selectProductForBulk(p);
+    } else {
+      setTimeout(() => { if (searchInput) searchInput.focus(); }, 120);
+    }
   },
 
-  async searchQuickStockProduct(query) {
-    const resultsBox = document.getElementById('quickStockSearchResults');
+  // Backward compatibility alias for any remaining references
+  async openQuickStockModal(productId) {
+    await this.openBulkStockModal(productId);
+  },
+
+  async searchBulkProducts(query) {
+    const resultsBox = document.getElementById('bulkStockSearchResults');
     if (!resultsBox) return;
     const q = (query || '').trim().toLowerCase();
     if (!q) {
@@ -7359,108 +7360,298 @@ const InventoryManager = {
       resultsBox.classList.add('hidden');
       return;
     }
+
     const all = await db.products.toArray();
     const matches = all.filter(p =>
-      p.sku.toLowerCase().includes(q) ||
-      p.name.toLowerCase().includes(q) ||
+      (p.sku && p.sku.toLowerCase().includes(q)) ||
+      (p.name && p.name.toLowerCase().includes(q)) ||
       (p.nameSi && p.nameSi.toLowerCase().includes(q)) ||
       (p.barcodes && p.barcodes.some(b => b.toLowerCase().includes(q)))
-    ).slice(0, 8);
+    ).slice(0, 10);
 
     if (matches.length === 0) {
-      resultsBox.innerHTML = `<div class="p-2.5 text-center text-slate-400 text-xs">No products found</div>`;
+      resultsBox.innerHTML = `<div class="p-3 text-center text-slate-400 text-xs">කිසිදු භාණ්ඩයක් හමු නොවීය (No matching product)</div>`;
       resultsBox.classList.remove('hidden');
       return;
     }
 
     resultsBox.innerHTML = matches.map(p => `
-      <div onclick="InventoryManager.openQuickStockModal(${p.id})" class="p-2 hover:bg-slate-800 rounded-lg cursor-pointer flex items-center justify-between text-xs border-b border-slate-800 last:border-none">
+      <div onclick="InventoryManager.selectProductForBulkById(${p.id})" class="p-2.5 hover:bg-slate-800 rounded-xl cursor-pointer flex items-center justify-between text-xs border-b border-slate-800/80 last:border-none transition">
         <div>
-          <span class="font-bold text-white">${p.name}</span>
-          <span class="text-[10px] text-sky-400 font-mono ml-1.5">[${p.sku}]</span>
+          <div class="font-bold text-white">${p.name}</div>
+          <div class="text-[11px] text-sky-400 font-mono mt-0.5">${p.sku} ${p.nameSi ? '• ' + p.nameSi : ''}</div>
         </div>
         <div class="text-right">
-          <div class="text-[11px] font-mono text-emerald-400 font-bold">Stock: ${p.currentStock || 0} ${p.unit || ''}</div>
-          <div class="text-[10px] text-slate-400">${formatLKR(p.sellingPrice)}</div>
+          <div class="text-xs font-mono text-emerald-400 font-bold">තොග: ${p.currentStock || 0} ${p.unit || ''}</div>
+          <div class="text-[11px] text-slate-400 font-mono">Retail: ${formatLKR(p.sellingPrice)}</div>
         </div>
       </div>
     `).join('');
     resultsBox.classList.remove('hidden');
   },
 
-  onQuickStockChange() {
-    const currEl = document.getElementById('quickStockCurrentDisplay');
-    const addInput = document.getElementById('quickStockAddInput');
-    const addedVal = parseFloat(addInput?.value) || 0;
-    const previewContainer = document.getElementById('quickStockNewTotalPreview');
-    const previewVal = document.getElementById('quickStockNewTotalVal');
-
-    const currVal = parseFloat(currEl?.textContent) || 0;
-    if (addInput && addInput.value.trim() !== '' && !isNaN(addedVal)) {
-      const total = Math.round((currVal + addedVal) * 100) / 100;
-      if (previewVal) previewVal.textContent = total.toFixed(2);
-      if (previewContainer) previewContainer.classList.remove('hidden');
-    } else {
-      if (previewContainer) previewContainer.classList.add('hidden');
+  handleBulkSearchKeydown(event) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      const resultsBox = document.getElementById('bulkStockSearchResults');
+      const firstResult = resultsBox?.querySelector('[onclick]');
+      if (firstResult) {
+        firstResult.click();
+      }
     }
   },
 
-  async saveQuickStockUpdate() {
-    const id = parseInt(document.getElementById('quickStockProductId')?.value);
-    if (!id || isNaN(id)) {
-      alert('කරුණාකර යාවත්කාලීන කිරීමට භාණ්ඩයක් තෝරන්න (Please select a product first).');
-      return;
+  async selectProductForBulkById(id) {
+    const p = await db.products.get(id);
+    if (p) this.selectProductForBulk(p);
+  },
+
+  selectProductForBulk(product) {
+    this._bulkActiveProduct = product;
+
+    // Hide search results dropdown
+    const resultsBox = document.getElementById('bulkStockSearchResults');
+    if (resultsBox) { resultsBox.innerHTML = ''; resultsBox.classList.add('hidden'); }
+
+    const searchInput = document.getElementById('bulkStockSearchInput');
+    if (searchInput) searchInput.value = `${product.name} [${product.sku}]`;
+
+    // Show active item panel
+    const activePanel = document.getElementById('bulkActiveProductPanel');
+    if (activePanel) activePanel.classList.remove('hidden');
+
+    // Fill current display labels
+    const nameEl = document.getElementById('bulkActiveName');
+    const skuEl = document.getElementById('bulkActiveSku');
+    const stockEl = document.getElementById('bulkActiveCurrentStock');
+
+    if (nameEl) nameEl.textContent = product.name;
+    if (skuEl) skuEl.textContent = `SKU: ${product.sku} | Unit: ${product.unit || 'unit'}`;
+    if (stockEl) stockEl.textContent = `${product.currentStock || 0} ${product.unit || 'unit'}`;
+
+    // Fill input fields
+    const addInput = document.getElementById('bulkActiveAddStock');
+    const retailInput = document.getElementById('bulkActiveRetail');
+    const wholesaleInput = document.getElementById('bulkActiveWholesale');
+    const costInput = document.getElementById('bulkActiveCost');
+    const previewEl = document.getElementById('bulkActiveNewStockPreview');
+
+    if (addInput) addInput.value = '';
+    if (retailInput) retailInput.value = product.sellingPrice || '';
+    if (wholesaleInput) wholesaleInput.value = product.wholesalePrice || product.sellingPrice || '';
+    if (costInput) costInput.value = product.costPrice || '';
+    if (previewEl) {
+      previewEl.textContent = `${product.currentStock || 0} ${product.unit || ''}`;
+      previewEl.className = 'font-mono font-bold text-slate-300 text-sm';
     }
-    const product = await db.products.get(id);
-    if (!product) {
-      alert('Product not found in database.');
+
+    if (addInput) {
+      addInput.focus();
+      addInput.select();
+    }
+  },
+
+  onBulkActiveAddStockChange() {
+    if (!this._bulkActiveProduct) return;
+    const addInput = document.getElementById('bulkActiveAddStock');
+    const previewEl = document.getElementById('bulkActiveNewStockPreview');
+    const addVal = parseFloat(addInput?.value) || 0;
+    const curVal = Number(this._bulkActiveProduct.currentStock || 0);
+    const newTotal = Math.round((curVal + addVal) * 100) / 100;
+    if (previewEl) {
+      previewEl.textContent = `${newTotal} ${this._bulkActiveProduct.unit || ''}`;
+      previewEl.className = addVal > 0 ? 'font-mono font-black text-emerald-400 text-sm' : (addVal < 0 ? 'font-mono font-black text-rose-400 text-sm' : 'font-mono font-bold text-slate-300 text-sm');
+    }
+  },
+
+  addActiveProductToBatch() {
+    if (!this._bulkActiveProduct) {
+      alert('කරුණාකර පළමුව භාණ්ඩයක් තෝරන්න (Please select a product first).');
       return;
     }
 
-    const addStockVal = parseFloat(document.getElementById('quickStockAddInput')?.value) || 0;
-    const retailVal = parseFloat(document.getElementById('quickStockRetailInput')?.value);
-    const wholesaleVal = parseFloat(document.getElementById('quickStockWholesaleInput')?.value);
-    const costVal = parseFloat(document.getElementById('quickStockCostInput')?.value);
+    const p = this._bulkActiveProduct;
+    const addStockVal = parseFloat(document.getElementById('bulkActiveAddStock')?.value) || 0;
+    const retailRaw = document.getElementById('bulkActiveRetail')?.value?.trim();
+    const wholesaleRaw = document.getElementById('bulkActiveWholesale')?.value?.trim();
+    const costRaw = document.getElementById('bulkActiveCost')?.value?.trim();
 
-    const oldStock = Number(product.currentStock || 0);
+    const retailVal = retailRaw !== '' ? (parseFloat(retailRaw) || 0) : (p.sellingPrice || 0);
+    const wholesaleVal = wholesaleRaw !== '' ? (parseFloat(wholesaleRaw) || 0) : (p.wholesalePrice || p.sellingPrice || 0);
+    const costVal = costRaw !== '' ? (parseFloat(costRaw) || 0) : (p.costPrice || 0);
+
+    const oldStock = Number(p.currentStock || 0);
     const newStock = Math.round((oldStock + addStockVal) * 100) / 100;
 
-    const updates = {
-      currentStock: newStock
+    // Check if already in batch
+    const existingIndex = this._bulkStagedItems.findIndex(i => i.productId === p.id);
+    const stagedItem = {
+      productId: p.id,
+      name: p.name,
+      nameSi: p.nameSi || '',
+      sku: p.sku,
+      unit: p.unit || 'unit',
+      oldStock,
+      addStock: addStockVal,
+      newStock,
+      oldRetail: p.sellingPrice || 0,
+      retailPrice: retailVal,
+      oldWholesale: p.wholesalePrice || p.sellingPrice || 0,
+      wholesalePrice: wholesaleVal,
+      oldCost: p.costPrice || 0,
+      costPrice: costVal
     };
 
-    if (!isNaN(retailVal) && retailVal > 0) updates.sellingPrice = retailVal;
-    // Fix: allow wholesalePrice=0 explicitly; also auto-calculate from MRP if wholesale left blank
-    const wsRaw = document.getElementById('quickStockWholesaleInput')?.value?.trim();
-    if (wsRaw !== '' && wsRaw !== undefined && !isNaN(wholesaleVal) && wholesaleVal >= 0) {
-      updates.wholesalePrice = wholesaleVal;
-    } else if (wsRaw === '' && !isNaN(retailVal) && retailVal > 0) {
-      // Auto-calculate wholesale as 90% of retail if field left empty
-      updates.wholesalePrice = Math.round(retailVal * 0.90 * 100) / 100;
+    if (existingIndex >= 0) {
+      this._bulkStagedItems[existingIndex] = stagedItem;
+    } else {
+      this._bulkStagedItems.push(stagedItem);
     }
-    if (!isNaN(costVal) && costVal > 0) updates.costPrice = costVal;
 
-    await db.products.update(id, updates);
+    if (window.SoundManager) SoundManager.playScanBeep();
 
-    if (addStockVal !== 0) {
+    this._renderBulkStagedTable();
+    this._resetBulkProductForm();
+
+    // Focus back on search input for next item!
+    const searchInput = document.getElementById('bulkStockSearchInput');
+    if (searchInput) {
+      searchInput.value = '';
+      searchInput.focus();
+    }
+  },
+
+  removeStagedItem(index) {
+    if (index >= 0 && index < this._bulkStagedItems.length) {
+      this._bulkStagedItems.splice(index, 1);
+      this._renderBulkStagedTable();
+    }
+  },
+
+  clearAllStagedItems() {
+    if (this._bulkStagedItems.length === 0) return;
+    if (confirm('ලැයිස්තුවේ ඇති සියලුම භාණ්ඩ ඉවත් කරන්නද? (Clear all staged items?)')) {
+      this._bulkStagedItems = [];
+      this._renderBulkStagedTable();
+      this._resetBulkProductForm();
+    }
+  },
+
+  _resetBulkProductForm() {
+    this._bulkActiveProduct = null;
+    const activePanel = document.getElementById('bulkActiveProductPanel');
+    if (activePanel) activePanel.classList.add('hidden');
+    const searchInput = document.getElementById('bulkStockSearchInput');
+    if (searchInput) searchInput.value = '';
+    const resultsBox = document.getElementById('bulkStockSearchResults');
+    if (resultsBox) { resultsBox.innerHTML = ''; resultsBox.classList.add('hidden'); }
+  },
+
+  _renderBulkStagedTable() {
+    const tbody = document.getElementById('bulkStockStagedTableBody');
+    const emptyState = document.getElementById('bulkStockStagedEmpty');
+    const countBadge = document.getElementById('bulkStagedCountBadge');
+    const saveBtn = document.getElementById('bulkStockSaveAllBtn');
+
+    const count = this._bulkStagedItems.length;
+    if (countBadge) countBadge.textContent = `${count} Items in Batch`;
+    if (saveBtn) {
+      saveBtn.disabled = count === 0;
+      saveBtn.className = count === 0
+        ? 'px-6 py-2.5 bg-slate-800 text-slate-500 rounded-xl font-extrabold text-sm transition cursor-not-allowed'
+        : 'px-6 py-2.5 bg-gradient-to-r from-violet-600 to-emerald-600 hover:from-violet-500 hover:to-emerald-500 text-white rounded-xl font-extrabold text-sm transition shadow-lg shadow-emerald-700/40 flex items-center gap-2 cursor-pointer';
+    }
+
+    if (!tbody) return;
+
+    if (count === 0) {
+      tbody.innerHTML = '';
+      if (emptyState) emptyState.classList.remove('hidden');
+      return;
+    }
+
+    if (emptyState) emptyState.classList.add('hidden');
+
+    tbody.innerHTML = this._bulkStagedItems.map((item, index) => {
+      const stockDiffText = item.addStock > 0 ? `+${item.addStock}` : (item.addStock < 0 ? `${item.addStock}` : '0');
+      const stockDiffColor = item.addStock > 0 ? 'text-emerald-400' : (item.addStock < 0 ? 'text-rose-400' : 'text-slate-400');
+
+      return `
+        <tr class="border-b border-slate-800 hover:bg-slate-800/40 text-xs transition">
+          <td class="p-2.5 font-mono text-slate-500 text-center font-bold">${index + 1}</td>
+          <td class="p-2.5">
+            <div class="font-bold text-slate-100">${item.name}</div>
+            <div class="text-[10px] text-sky-400 font-mono mt-0.5">${item.sku}</div>
+          </td>
+          <td class="p-2.5 text-center font-mono text-slate-400">${item.oldStock} ${item.unit}</td>
+          <td class="p-2.5 text-center font-mono font-bold ${stockDiffColor}">${stockDiffText}</td>
+          <td class="p-2.5 text-center font-mono font-extrabold text-sky-300 bg-sky-950/30 rounded-lg">${item.newStock} ${item.unit}</td>
+          <td class="p-2.5 text-right font-mono font-bold text-emerald-400">${formatLKR(item.retailPrice)}</td>
+          <td class="p-2.5 text-right font-mono font-bold text-violet-400">${formatLKR(item.wholesalePrice)}</td>
+          <td class="p-2.5 text-right font-mono text-amber-400">${formatLKR(item.costPrice)}</td>
+          <td class="p-2.5 text-center">
+            <button onclick="InventoryManager.removeStagedItem(${index})" class="p-1.5 text-rose-400 hover:text-rose-300 hover:bg-rose-950/60 rounded-lg transition" title="ඉවත් කරන්න (Remove)">
+              🗑️
+            </button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  },
+
+  async saveBulkStockUpdate() {
+    if (this._bulkStagedItems.length === 0) {
+      alert('කරුණාකර පළමුව භාණ්ඩ ලැයිස්තුවට එක් කරන්න (Please add items to batch first).');
+      return;
+    }
+
+    const items = [...this._bulkStagedItems];
+    let updatedCount = 0;
+    const staffName = (window.AuthManager && AuthManager.currentUser) ? AuthManager.currentUser.name : 'Staff';
+
+    for (const item of items) {
       try {
-        await db.stockAdjustments.add({
-          productId: id,
-          productName: product.name,
-          type: addStockVal > 0 ? 'in' : 'out',
-          quantity: Math.abs(addStockVal),
-          reason: `Quick Stock Update (+${addStockVal})`,
-          adjustedBy: (window.AuthManager && AuthManager.currentUser) ? AuthManager.currentUser.name : 'Staff',
-          timestamp: new Date().toISOString()
-        });
-      } catch (e) {}
+        const product = await db.products.get(item.productId);
+        if (!product) continue;
+
+        const updates = {
+          currentStock: item.newStock,
+          sellingPrice: item.retailPrice,
+          wholesalePrice: item.wholesalePrice,
+          costPrice: item.costPrice
+        };
+
+        await db.products.update(item.productId, updates);
+
+        if (item.addStock !== 0) {
+          try {
+            await db.stockAdjustments.add({
+              productId: item.productId,
+              productName: item.name,
+              type: item.addStock > 0 ? 'in' : 'out',
+              quantity: Math.abs(item.addStock),
+              reason: `Bulk Batch Update (${item.addStock > 0 ? '+' : ''}${item.addStock} ${item.unit})`,
+              adjustedBy: staffName,
+              timestamp: new Date().toISOString()
+            });
+          } catch (e) {}
+        }
+
+        updatedCount++;
+      } catch (err) {
+        console.error('Error saving item:', item, err);
+      }
     }
 
-    document.getElementById('quickStockModal')?.classList.add('hidden');
+    this._bulkStagedItems = [];
+    this._resetBulkProductForm();
+    document.getElementById('bulkStockModal')?.classList.add('hidden');
+
     await this.renderInventoryTable();
     await this.renderValuationCards();
     if (window.SoundManager) SoundManager.playSuccessChime();
-    alert(`"${product.name}" තොග සහ මිල ගණන් සාර්ථකව යාවත්කාලීන විය! (Updated successfully)`);
+
+    alert(`✅ භාණ්ඩ ${updatedCount} ක තොග සහ මිල ගණන් සාර්ථකව Save විය! (${updatedCount} products updated successfully)`);
   },
 };
 
@@ -8001,26 +8192,34 @@ const CustomerManager = {
   },
 
   async selectCustomerForPOS(id) {
-    let customer = await db.customers.get(id);
-    if (!customer && !isNaN(Number(id))) customer = await db.customers.get(Number(id));
-    if (customer) {
-      if (window.POSManager) {
-        POSManager.selectedCustomer = customer;
-        const display = document.getElementById('selectedCustomerDisplay');
-        if (display) {
-          const badge = (customer.isSchool || customer.customerType === 'school') ? ` 🏫 (${customer.schoolName || 'පාසල් ණය'})` : '';
-          display.textContent = `${customer.name}${badge} - ${customer.phone || ''}`;
+    try {
+      let customer = await db.customers.get(id);
+      if (!customer && !isNaN(Number(id))) customer = await db.customers.get(Number(id));
+      if (!customer && typeof id === 'number') customer = await db.customers.get(String(id));
+      if (!customer && typeof id === 'string') customer = await db.customers.get(parseInt(id, 10));
+
+      if (customer) {
+        if (window.POSManager) {
+          POSManager.setCustomer(customer);
         }
-        POSManager.updateCustomerSelectionUI();
+        document.getElementById('posCustomerModal')?.classList.add('hidden');
+        if (window.App) App.switchTab('pos');
+        if (window.SoundManager) SoundManager.playSuccessChime();
+      } else {
+        console.warn('Customer not found with id:', id);
       }
-      document.getElementById('posCustomerModal')?.classList.add('hidden');
-      if (window.App) App.switchTab('pos');
-      if (window.SoundManager) SoundManager.playSuccessChime();
+    } catch (err) {
+      console.error('Error selecting customer for POS:', err);
     }
   },
 
-  openAddCustomerModal() {
-    document.getElementById('customerModalTitle').textContent = 'Register New Customer';
+  openAddCustomerModal(fromPOS = false) {
+    // Store flag BEFORE any modal changes — used in performSave
+    this._calledFromPOS = fromPOS;
+
+    document.getElementById('customerModalTitle').textContent = fromPOS
+      ? 'POS සඳහා නව පාරිභෝගිකයා | New Customer for POS'
+      : 'Register New Customer';
     document.getElementById('customerForm').reset();
     document.getElementById('custIdInput').value = '';
 
@@ -8034,7 +8233,18 @@ const CustomerManager = {
     const ob = document.getElementById('custOpeningBalanceInput');
     if (ob) ob.value = '0';
 
+    // Hide POS modal first so z-index doesn't conflict
+    if (fromPOS) {
+      document.getElementById('posCustomerModal')?.classList.add('hidden');
+    }
+
     document.getElementById('customerModal').classList.remove('hidden');
+
+    // Focus name field
+    setTimeout(() => {
+      const nameInput = document.getElementById('custNameInput');
+      if (nameInput) nameInput.focus();
+    }, 150);
   },
 
   async openEditCustomerModal(id) {
@@ -8099,10 +8309,11 @@ const CustomerManager = {
           totalSpent: 0
         };
         const newId = await db.customers.add(custData);
-        const isFromPos = !document.getElementById('posCustomerModal').classList.contains('hidden');
-        if (isFromPos) {
+        // Use stored flag — reliable even after modal state changes
+        if (this._calledFromPOS) {
           custData.id = newId;
           POSManager.setCustomer(custData);
+          this._calledFromPOS = false;
         }
       }
 

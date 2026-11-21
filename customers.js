@@ -314,26 +314,34 @@ const CustomerManager = {
   },
 
   async selectCustomerForPOS(id) {
-    let customer = await db.customers.get(id);
-    if (!customer && !isNaN(Number(id))) customer = await db.customers.get(Number(id));
-    if (customer) {
-      if (window.POSManager) {
-        POSManager.selectedCustomer = customer;
-        const display = document.getElementById('selectedCustomerDisplay');
-        if (display) {
-          const badge = (customer.isSchool || customer.customerType === 'school') ? ` 🏫 (${customer.schoolName || 'පාසල් ණය'})` : '';
-          display.textContent = `${customer.name}${badge} - ${customer.phone || ''}`;
+    try {
+      let customer = await db.customers.get(id);
+      if (!customer && !isNaN(Number(id))) customer = await db.customers.get(Number(id));
+      if (!customer && typeof id === 'number') customer = await db.customers.get(String(id));
+      if (!customer && typeof id === 'string') customer = await db.customers.get(parseInt(id, 10));
+
+      if (customer) {
+        if (window.POSManager) {
+          POSManager.setCustomer(customer);
         }
-        POSManager.updateCustomerSelectionUI();
+        document.getElementById('posCustomerModal')?.classList.add('hidden');
+        if (window.App) App.switchTab('pos');
+        if (window.SoundManager) SoundManager.playSuccessChime();
+      } else {
+        console.warn('Customer not found with id:', id);
       }
-      document.getElementById('posCustomerModal')?.classList.add('hidden');
-      if (window.App) App.switchTab('pos');
-      if (window.SoundManager) SoundManager.playSuccessChime();
+    } catch (err) {
+      console.error('Error selecting customer for POS:', err);
     }
   },
 
-  openAddCustomerModal() {
-    document.getElementById('customerModalTitle').textContent = 'Register New Customer';
+  openAddCustomerModal(fromPOS = false) {
+    // Store flag BEFORE any modal changes — used in performSave
+    this._calledFromPOS = fromPOS;
+
+    document.getElementById('customerModalTitle').textContent = fromPOS
+      ? 'POS සඳහා නව පාරිභෝගිකයා | New Customer for POS'
+      : 'Register New Customer';
     document.getElementById('customerForm').reset();
     document.getElementById('custIdInput').value = '';
 
@@ -347,7 +355,18 @@ const CustomerManager = {
     const ob = document.getElementById('custOpeningBalanceInput');
     if (ob) ob.value = '0';
 
+    // Hide POS modal first so z-index doesn't conflict
+    if (fromPOS) {
+      document.getElementById('posCustomerModal')?.classList.add('hidden');
+    }
+
     document.getElementById('customerModal').classList.remove('hidden');
+
+    // Focus name field
+    setTimeout(() => {
+      const nameInput = document.getElementById('custNameInput');
+      if (nameInput) nameInput.focus();
+    }, 150);
   },
 
   async openEditCustomerModal(id) {
@@ -412,10 +431,11 @@ const CustomerManager = {
           totalSpent: 0
         };
         const newId = await db.customers.add(custData);
-        const isFromPos = !document.getElementById('posCustomerModal').classList.contains('hidden');
-        if (isFromPos) {
+        // Use stored flag — reliable even after modal state changes
+        if (this._calledFromPOS) {
           custData.id = newId;
           POSManager.setCustomer(custData);
+          this._calledFromPOS = false;
         }
       }
 
