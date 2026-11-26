@@ -50,6 +50,16 @@ const App = {
       console.warn('[App] Shift init error:', e);
     }
 
+    // Warm up farmers & electronic scale manager in background
+    try {
+      if (window.FarmerManager) {
+        FarmerManager.cacheFarmers().catch(() => {});
+      }
+      if (window.ScaleManager) {
+        ScaleManager.init().catch(() => {});
+      }
+    } catch (e) {}
+
     // 6. Init POS Module & Dashboard safely
     try {
       await POSManager.init();

@@ -29,6 +29,9 @@ const POSManager = {
     await this.renderCategoryFilter();
     await this.renderProductGrid();
     await this.updateHoldBillsBadge();
+    if (window.ScaleManager) {
+      ScaleManager.renderHeaderWidget();
+    }
     this.focusSearchInput();
   },
 
@@ -364,6 +367,14 @@ const POSManager = {
   async addProduct(product, qtyToAdd = 1) {
     if (!product) return;
 
+    // Automatic weight reading from Budry Electronic Scale (MFD-51)
+    if (qtyToAdd === 1 && window.ScaleManager && ScaleManager.isConnected) {
+      const scaleWeight = ScaleManager.getWeightForProduct(product);
+      if (scaleWeight && scaleWeight > 0) {
+        qtyToAdd = scaleWeight;
+      }
+    }
+
     if (product.currentStock <= 0) {
       if (!confirm(`Warning: "${product.name}" is currently OUT OF STOCK (${product.currentStock} ${product.unit}). Add anyway?`)) {
         this.focusSearchInput();
@@ -697,7 +708,14 @@ const POSManager = {
               <button onclick="POSManager.updateItemQty(${index}, ${item.qty + (item.unit === 'kg' ? 0.25 : 1)}); POSManager.focusSearchInput();" 
                       class="w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm active:bg-slate-600 font-bold select-none" title="Increase Qty">+</button>
             </div>
-            <div class="text-[10px] text-slate-400 font-mono mt-0.5">${item.unit}</div>
+            <div class="flex items-center justify-center gap-1 mt-0.5">
+              <span class="text-[10px] text-slate-400 font-mono">${item.unit}</span>
+              ${(item.unit === 'kg' || item.unit === 'g') ? `
+                <button type="button" onclick="ScaleManager.applyWeightToCartIndex(${index})" class="px-1 py-0.2 bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-700/80 text-emerald-300 rounded text-[9px] font-bold transition flex items-center gap-0.5 cursor-pointer" title="Budry Scale එකෙන් බර ලබාගන්න (Read Scale)">
+                  <span>⚖️</span> <span>Scale</span>
+                </button>
+              ` : ''}
+            </div>
           </td>
 
           <!-- 4. Line Total -->

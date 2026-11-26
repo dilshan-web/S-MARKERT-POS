@@ -1469,6 +1469,14 @@ input[type=number] {
                 <svg class="w-4 h-4 absolute left-3 top-2.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
               </div>
 
+              <!-- Budry Scale Live Indicator & Settings Button -->
+              <button id="posScaleConnectBtn" type="button" onclick="ScaleManager.toggleConnection()" 
+                      class="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shrink-0 border border-slate-700 cursor-pointer" 
+                      title="Budry Electronic Scale (MFD-51)">
+                <span id="posScaleIcon" class="text-sm">⚖️</span>
+                <span id="posScaleStatusText" class="font-mono">Scale</span>
+              </button>
+
               <!-- Camera Scanner Button -->
               <button onclick="App.startCameraScanner()" class="px-3 py-2 bg-slate-800 hover:bg-sky-600 text-slate-200 hover:text-white rounded-xl text-xs font-semibold transition flex items-center gap-1.5 shrink-0" title="Scan with Camera">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
@@ -2152,7 +2160,12 @@ input[type=number] {
 
                   <!-- Weight in KG -->
                   <div class="sm:col-span-2 space-y-1">
-                    <label class="block text-slate-300 font-semibold">බර (KG) *</label>
+                    <label class="block text-slate-300 font-semibold flex items-center justify-between">
+                      <span>බර (KG) *</span>
+                      <button type="button" onclick="ScaleManager.captureWeightForFarmerIntake()" class="text-[10px] text-emerald-400 hover:text-emerald-300 font-bold flex items-center gap-0.5 cursor-pointer" title="Budry Scale එකෙන් බර ලබාගන්න (Read Scale)">
+                        <span>⚖️</span> <span>Scale</span>
+                      </button>
+                    </label>
                     <input id="farmerVegWeightInput" type="number" step="0.05" min="0.01" placeholder="25.5"
                            onkeydown="if(event.key === 'Enter'){ event.preventDefault(); const p = document.getElementById('farmerVegPriceInput'); if(p){ p.focus(); p.select(); } }"
                            class="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-xl text-slate-100 font-mono font-bold text-sm focus:border-emerald-500" />
@@ -5481,6 +5494,107 @@ input[type=number] {
         </div>
       </div>
 
+    </div>
+  </div>
+
+  <!-- Budry Electronic Scales (MFD-51) Management Modal -->
+  <div id="scaleSettingsModal" class="app-modal fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 hidden">
+    <div class="w-full max-w-lg bg-slate-900 border border-slate-700/80 rounded-3xl shadow-2xl flex flex-col max-h-[92vh] overflow-hidden">
+      <!-- Modal Header -->
+      <div class="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between shrink-0 bg-slate-850">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-xl">
+            ⚖️
+          </div>
+          <div>
+            <h3 class="text-sm sm:text-base font-extrabold text-slate-100 flex items-center gap-2">
+              <span>Budry Electronic Scales (MFD-51)</span>
+            </h3>
+            <p class="text-xs text-slate-400">RS-232 / USB Cable Digital Weight Integration</p>
+          </div>
+        </div>
+        <button type="button" onclick="ScaleManager.closeScaleModal()" class="text-slate-400 hover:text-white text-xl p-1 leading-none">&times;</button>
+      </div>
+
+      <!-- Modal Body -->
+      <div class="p-4 sm:p-5 overflow-y-auto space-y-4 text-xs">
+        <!-- Live Weight Card -->
+        <div class="p-4 bg-slate-950 border border-slate-800 rounded-2xl flex flex-col items-center justify-center text-center relative overflow-hidden">
+          <div class="flex items-center justify-between w-full mb-1">
+            <span class="text-[11px] font-bold text-slate-400">LIVE WEIGHT STREAM (සජීවී බර)</span>
+            <span id="scaleModalStableBadge" class="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">STANDBY</span>
+          </div>
+          <div id="scaleModalLiveWeight" class="text-4xl sm:text-5xl font-black font-mono text-emerald-400 tracking-wider my-2">
+            0.000 kg
+          </div>
+          <div class="flex items-center gap-2 mt-2">
+            <button type="button" onclick="ScaleManager.tare()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl font-bold transition flex items-center gap-1 shadow cursor-pointer">
+              <span>🎯</span> <span>Tare (ශුන්‍ය කරන්න)</span>
+            </button>
+            <button type="button" onclick="ScaleManager.zero()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 rounded-xl font-bold transition cursor-pointer">
+              <span>Reset Zero</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Connection Settings -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div class="space-y-1">
+            <label class="block text-slate-300 font-bold">Baud Rate (සම්බන්ධතා වේගය):</label>
+            <select id="scaleBaudRateSelect" onchange="ScaleManager.setBaudRate(this.value)" class="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-xl text-slate-100 font-mono text-xs focus:border-sky-500">
+              <option value="9600">9600 bps (Budry MFD-51 Standard)</option>
+              <option value="4800">4800 bps</option>
+              <option value="2400">2400 bps</option>
+              <option value="19200">19200 bps</option>
+              <option value="115200">115200 bps</option>
+            </select>
+          </div>
+
+          <div class="space-y-1">
+            <label class="block text-slate-300 font-bold">Scale Port Status:</label>
+            <div class="flex items-center h-10">
+              <span id="scaleModalConnBadge" class="px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-800 text-slate-400 border border-slate-700">DISCONNECTED</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Auto Apply Checkbox -->
+        <div class="p-3 bg-slate-850 border border-slate-800 rounded-xl flex items-center justify-between">
+          <div>
+            <div class="font-bold text-slate-200">Auto-apply Weight to POS Qty</div>
+            <div class="text-[11px] text-slate-400">එළවළු/පළතුරු හෝ KG භාණ්ඩ Add කළ විට Scale එකේ බර Auto වැටේ</div>
+          </div>
+          <input type="checkbox" id="scaleAutoApplyCheck" onchange="ScaleManager.toggleAutoApply(this.checked)" class="w-5 h-5 accent-emerald-500 rounded cursor-pointer" checked />
+        </div>
+
+        <!-- Raw Diagnostic Log Terminal -->
+        <div class="space-y-1">
+          <label class="block text-slate-400 text-[11px] font-mono">Serial Raw Data Monitor (RX):</label>
+          <pre id="scaleModalLogBox" class="p-2.5 bg-slate-950 border border-slate-800 rounded-xl text-[10px] font-mono text-emerald-400/90 h-24 overflow-y-auto whitespace-pre-wrap select-all">Waiting for scale data...</pre>
+        </div>
+
+        <!-- Setup Instructions -->
+        <div class="p-3 bg-sky-950/30 border border-sky-800/40 rounded-xl space-y-1 text-slate-300">
+          <div class="font-bold text-sky-400 flex items-center gap-1.5">
+            <span>ℹ️</span> <span>Budry MFD-51 සම්බන්ධ කරගන්නා ආකාරය:</span>
+          </div>
+          <ol class="list-decimal list-inside space-y-1 text-[11px] text-slate-300 leading-relaxed">
+            <li>Budry MFD-51 පරිමාණයේ පිටුපස RS-232 Port එකෙන් USB-to-RS232 Converter Cable එක පරිගණකයට සම්බන්ධ කරන්න.</li>
+            <li>පහත 'Connect Budry Scale' ඔබා Chrome/Edge හි දිස්වන COM Port එක (Prolific / CH340 / FTDI) තෝරන්න.</li>
+            <li>පරිමාණයේ තැබූ බර මෙහි සජීවීව පෙන්වයි. POS වෙතින් භාණ්ඩය Search කර Add කළ විට එම බර Qty එකට ස්වයංක්‍රීයව එක්වේ!</li>
+          </ol>
+        </div>
+      </div>
+
+      <!-- Modal Footer -->
+      <div class="p-4 bg-slate-950 border-t border-slate-800 flex items-center justify-between shrink-0">
+        <button id="scaleModalToggleBtn" type="button" onclick="ScaleManager.toggleConnection()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition shadow-md shadow-emerald-600/30 cursor-pointer">
+          🟢 Connect Budry Scale
+        </button>
+        <button type="button" onclick="ScaleManager.closeScaleModal()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition cursor-pointer">
+          වසන්න (Close)
+        </button>
+      </div>
     </div>
   </div>
 
@@ -9921,6 +10035,392 @@ const SoundManager = {
 window.SoundManager = SoundManager;
 
 
+// ==================== js\scale.js ====================
+
+/**
+ * Budry Electronics (MFD-51) & Compatible Trade Electronic Scales Manager
+ * Web Serial API Engine for Direct POS Weight Capture & Real-time Digital Streaming
+ */
+
+const ScaleManager = {
+  port: null,
+  reader: null,
+  keepReading: false,
+  isConnected: false,
+  currentWeight: 0.000,
+  rawBuffer: '',
+  isStable: true,
+  baudRate: 9600,
+  autoApplyWeight: true,
+  softwareTare: 0.000,
+  lastRawValue: 0.000,
+  recentLogs: [],
+
+  async init() {
+    // Load saved settings
+    try {
+      const savedBaud = localStorage.getItem('lankapos_scale_baud');
+      if (savedBaud) this.baudRate = parseInt(savedBaud, 10);
+      const savedAuto = localStorage.getItem('lankapos_scale_auto');
+      if (savedAuto !== null) this.autoApplyWeight = savedAuto === 'true';
+    } catch (e) {}
+
+    this.renderHeaderWidget();
+
+    // Auto-reconnect if browser already has authorized serial port
+    if ('serial' in navigator) {
+      try {
+        const ports = await navigator.serial.getPorts();
+        if (ports && ports.length > 0) {
+          console.log('[ScaleManager] Found previously authorized serial port. Auto-connecting...');
+          this.connect(false, ports[0]).catch(err => {
+            console.log('[ScaleManager] Auto-connect standby (Scale may be powered off or disconnected).');
+          });
+        }
+      } catch (e) {}
+    }
+  },
+
+  isSupported() {
+    return 'serial' in navigator;
+  },
+
+  async toggleConnection() {
+    if (this.isConnected) {
+      this.openScaleModal();
+    } else {
+      await this.connect(true);
+    }
+  },
+
+  async connect(interactive = true, existingPort = null) {
+    if (!this.isSupported()) {
+      alert('⚠️ Web Serial API is not supported in this browser.\n\nPlease open LankaPOS in Google Chrome or Microsoft Edge on localhost or HTTPS to connect your Budry MFD-51 electronic scale.');
+      return;
+    }
+
+    try {
+      let targetPort = existingPort;
+      if (!targetPort) {
+        if (!interactive) return;
+        targetPort = await navigator.serial.requestPort();
+      }
+
+      if (!targetPort) return;
+
+      this.port = targetPort;
+      await this.port.open({
+        baudRate: this.baudRate,
+        dataBits: 8,
+        stopBits: 1,
+        parity: 'none',
+        flowControl: 'none'
+      });
+
+      this.isConnected = true;
+      this.keepReading = true;
+      this.renderHeaderWidget();
+      if (window.SoundManager) SoundManager.playSuccessChime();
+
+      this.startReadingLoop();
+      this.log(`Scale connected at ${this.baudRate} baud (8-N-1). Ready.`);
+    } catch (err) {
+      console.error('[ScaleManager] Connection error:', err);
+      this.isConnected = false;
+      this.renderHeaderWidget();
+      if (interactive) {
+        alert(`❌ Could not connect to scale:\n${err.message || err}\n\nMake sure no other program (like PuTTY or another browser tab) is using this COM port.`);
+      }
+    }
+  },
+
+  async disconnect() {
+    this.keepReading = false;
+    try {
+      if (this.reader) {
+        await this.reader.cancel();
+        this.reader.releaseLock();
+        this.reader = null;
+      }
+      if (this.port) {
+        await this.port.close();
+        this.port = null;
+      }
+    } catch (e) {
+      console.warn('[ScaleManager] Disconnect error:', e);
+    }
+    this.isConnected = false;
+    this.currentWeight = 0.000;
+    this.renderHeaderWidget();
+    this.log('Scale disconnected.');
+  },
+
+  async startReadingLoop() {
+    const textDecoder = new TextDecoderStream();
+    const readableStreamClosed = this.port.readable.pipeTo(textDecoder.writable);
+    this.reader = textDecoder.readable.getReader();
+
+    try {
+      while (this.keepReading) {
+        const { value, done } = await this.reader.read();
+        if (done) break;
+        if (value) {
+          this.rawBuffer += value;
+          // Split incoming stream by newlines or carriage returns
+          if (this.rawBuffer.includes('\n') || this.rawBuffer.includes('\r')) {
+            const lines = this.rawBuffer.split(/[\r\n]+/);
+            this.rawBuffer = lines.pop(); // Keep incomplete chunk
+            for (const line of lines) {
+              if (line.trim()) {
+                this.parseScaleLine(line);
+              }
+            }
+          }
+        }
+      }
+    } catch (err) {
+      if (this.keepReading) {
+        console.warn('[ScaleManager] Stream reading error:', err);
+      }
+    } finally {
+      this.isConnected = false;
+      this.renderHeaderWidget();
+    }
+  },
+
+  /**
+   * Parse Budry MFD-51 / CAS / Toledo / Continuous ASCII Scale output
+   * Supported formats:
+   * 1. ST,GS,+001.250kg / ST,NT,+001.250kg / US,GS,+001.240kg
+   * 2. WN  001.250kg / WN001.250kg
+   * 3. =01.250 / +001.250 /  1.250 kg
+   * 4. Raw digits like 1.250 or 0.500
+   */
+  parseScaleLine(rawLine) {
+    const line = (rawLine || '').trim();
+    if (!line) return;
+
+    this.log(`RX: ${line}`);
+
+    // Check stability indicator: ST = Stable, US = Unstable / dynamic
+    let stable = true;
+    if (line.toUpperCase().includes('US') || line.includes('?') || line.includes('~')) {
+      stable = false;
+    }
+
+    // Regular expressions matching various weighing scale outputs
+    // Match 1: ST,GS,+001.250kg or ST,NT,001.250kg or WN 001.250kg
+    const matchKg = line.match(/(?:[+-]?\s*(\d+\.\d{2,3}))\s*(kg|g)?/i);
+
+    if (matchKg) {
+      let num = parseFloat(matchKg[1]);
+      const unit = (matchKg[2] || 'kg').toLowerCase();
+      if (unit === 'g') num = num / 1000;
+
+      if (!isNaN(num)) {
+        this.lastRawValue = num;
+        let netWeight = Math.max(0, num - this.softwareTare);
+        netWeight = Math.round(netWeight * 1000) / 1000;
+        this.updateWeight(netWeight, stable);
+      }
+    }
+  },
+
+  updateWeight(weight, isStable = true) {
+    this.currentWeight = weight;
+    this.isStable = isStable;
+    this.renderHeaderWidget();
+
+    // Update Live Monitor in Modal if open
+    const modalDisplay = document.getElementById('scaleModalLiveWeight');
+    if (modalDisplay) {
+      modalDisplay.textContent = `${this.currentWeight.toFixed(3)} kg`;
+      const stableBadge = document.getElementById('scaleModalStableBadge');
+      if (stableBadge) {
+        stableBadge.textContent = this.isStable ? 'STABLE (ස්ථාවරයි)' : 'MOTION (සෙලවේ)';
+        stableBadge.className = this.isStable
+          ? 'px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-700'
+          : 'px-2 py-0.5 rounded text-[10px] font-bold bg-amber-950 text-amber-300 border border-amber-700 animate-pulse';
+      }
+    }
+  },
+
+  renderHeaderWidget() {
+    const btn = document.getElementById('posScaleConnectBtn');
+    const textEl = document.getElementById('posScaleStatusText');
+    const iconEl = document.getElementById('posScaleIcon');
+    if (!btn || !textEl) return;
+
+    if (!this.isConnected) {
+      btn.className = 'px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shrink-0 border border-slate-700 cursor-pointer';
+      textEl.textContent = '⚖️ Scale';
+      if (iconEl) iconEl.className = 'text-sm text-slate-400';
+    } else {
+      const isMotion = !this.isStable;
+      const weightStr = `${this.currentWeight.toFixed(3)} kg`;
+      if (isMotion) {
+        btn.className = 'px-3 py-2 bg-amber-950/80 hover:bg-amber-900 text-amber-300 rounded-xl text-xs font-mono font-black transition flex items-center gap-1.5 shrink-0 border border-amber-500 shadow-sm cursor-pointer';
+        textEl.textContent = `⚖️ ${weightStr} ~`;
+      } else {
+        btn.className = 'px-3 py-2 bg-emerald-950/90 hover:bg-emerald-900 text-emerald-300 rounded-xl text-xs font-mono font-black transition flex items-center gap-1.5 shrink-0 border border-emerald-500 shadow-md shadow-emerald-950/50 cursor-pointer';
+        textEl.textContent = `⚖️ ${weightStr}`;
+      }
+    }
+  },
+
+  /**
+   * Called by POSManager when an item is being added to the cart
+   * Returns weight in kg if scale is connected and has a valid weight, or null
+   */
+  getWeightForProduct(product) {
+    if (!this.isConnected) return null;
+    const isWeightItem = product && (product.unit === 'kg' || product.unit === 'g');
+
+    if (isWeightItem || this.autoApplyWeight) {
+      if (this.currentWeight > 0) {
+        return this.currentWeight;
+      }
+    }
+    return null;
+  },
+
+  /**
+   * Apply live scale weight to a specific cart row index
+   */
+  applyWeightToCartIndex(index) {
+    if (!this.isConnected) {
+      this.connect(true);
+      return;
+    }
+
+    if (this.currentWeight <= 0) {
+      alert('⚠️ Scale reads 0.000 kg.\nPlease place the item on the Budry scale first.');
+      return;
+    }
+
+    if (window.POSManager && POSManager.cart && POSManager.cart[index]) {
+      POSManager.updateItemQty(index, this.currentWeight);
+      if (window.SoundManager) SoundManager.playScanBeep();
+      POSManager.focusSearchInput();
+    }
+  },
+
+  /**
+   * Capture weight for Farmer Intake
+   */
+  captureWeightForFarmerIntake() {
+    if (!this.isConnected) {
+      this.connect(true);
+      return;
+    }
+
+    if (this.currentWeight <= 0) {
+      alert('⚠️ Scale reads 0.000 kg.\nPlease place the vegetable bag/crate on the Budry scale first.');
+      return;
+    }
+
+    const input = document.getElementById('farmerVegWeightInput') || document.getElementById('farmerIntakeWeightInput');
+    if (input) {
+      input.value = this.currentWeight.toFixed(3);
+      if (typeof FarmerManager !== 'undefined' && FarmerManager.onIntakeWeightChange) {
+        FarmerManager.onIntakeWeightChange();
+      }
+      if (window.SoundManager) SoundManager.playScanBeep();
+      const p = document.getElementById('farmerVegPriceInput');
+      if (p) { p.focus(); p.select(); }
+    }
+  },
+
+  /**
+   * Zero / Tare the scale (Software Tare if serial tare command unsupported)
+   */
+  tare() {
+    this.softwareTare = this.lastRawValue;
+    this.currentWeight = 0.000;
+    this.renderHeaderWidget();
+    this.log(`Tare set to ${this.softwareTare.toFixed(3)} kg`);
+
+    // Also attempt sending standard Tare command over serial
+    try {
+      if (this.port && this.port.writable) {
+        const writer = this.port.writable.getWriter();
+        const encoder = new TextEncoder();
+        writer.write(encoder.encode('T\r\n'));
+        writer.releaseLock();
+      }
+    } catch (e) {}
+  },
+
+  zero() {
+    this.softwareTare = 0.000;
+    this.log('Software Tare cleared (Zero reset).');
+    this.renderHeaderWidget();
+  },
+
+  setBaudRate(newBaud) {
+    this.baudRate = parseInt(newBaud, 10);
+    localStorage.setItem('lankapos_scale_baud', this.baudRate);
+    this.log(`Baud rate set to ${this.baudRate}. Please reconnect.`);
+    if (this.isConnected) {
+      alert(`Baud rate changed to ${this.baudRate}. Reconnecting...`);
+      this.disconnect().then(() => this.connect(true));
+    }
+  },
+
+  toggleAutoApply(checked) {
+    this.autoApplyWeight = checked;
+    localStorage.setItem('lankapos_scale_auto', checked);
+  },
+
+  log(msg) {
+    const time = new Date().toLocaleTimeString();
+    this.recentLogs.unshift(`[${time}] ${msg}`);
+    if (this.recentLogs.length > 30) this.recentLogs.pop();
+
+    const logBox = document.getElementById('scaleModalLogBox');
+    if (logBox) {
+      logBox.textContent = this.recentLogs.join('\n');
+    }
+  },
+
+  openScaleModal() {
+    const modal = document.getElementById('scaleSettingsModal');
+    if (!modal) return;
+
+    const baudSelect = document.getElementById('scaleBaudRateSelect');
+    if (baudSelect) baudSelect.value = String(this.baudRate);
+
+    const autoCheck = document.getElementById('scaleAutoApplyCheck');
+    if (autoCheck) autoCheck.checked = this.autoApplyWeight;
+
+    const statusBadge = document.getElementById('scaleModalConnBadge');
+    if (statusBadge) {
+      statusBadge.textContent = this.isConnected ? 'CONNECTED (සම්බන්ධයි)' : 'DISCONNECTED (විසන්ධි කර ඇත)';
+      statusBadge.className = this.isConnected
+        ? 'px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-950 text-emerald-300 border border-emerald-700'
+        : 'px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-800 text-slate-400 border border-slate-700';
+    }
+
+    const connectBtn = document.getElementById('scaleModalToggleBtn');
+    if (connectBtn) {
+      connectBtn.textContent = this.isConnected ? '🔴 Disconnect Scale' : '🟢 Connect Budry Scale';
+      connectBtn.className = this.isConnected
+        ? 'px-4 py-2 bg-rose-700 hover:bg-rose-600 text-white rounded-xl text-xs font-bold transition'
+        : 'px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition shadow-md shadow-emerald-600/30';
+    }
+
+    this.log(this.isConnected ? `Scale status: Online (${this.baudRate} bps)` : 'Scale status: Offline');
+    modal.classList.remove('hidden');
+  },
+
+  closeScaleModal() {
+    document.getElementById('scaleSettingsModal')?.classList.add('hidden');
+  }
+};
+
+window.ScaleManager = ScaleManager;
+
+
 // ==================== js\pos.js ====================
 
 /**
@@ -9954,6 +10454,9 @@ const POSManager = {
     await this.renderCategoryFilter();
     await this.renderProductGrid();
     await this.updateHoldBillsBadge();
+    if (window.ScaleManager) {
+      ScaleManager.renderHeaderWidget();
+    }
     this.focusSearchInput();
   },
 
@@ -10289,6 +10792,14 @@ const POSManager = {
   async addProduct(product, qtyToAdd = 1) {
     if (!product) return;
 
+    // Automatic weight reading from Budry Electronic Scale (MFD-51)
+    if (qtyToAdd === 1 && window.ScaleManager && ScaleManager.isConnected) {
+      const scaleWeight = ScaleManager.getWeightForProduct(product);
+      if (scaleWeight && scaleWeight > 0) {
+        qtyToAdd = scaleWeight;
+      }
+    }
+
     if (product.currentStock <= 0) {
       if (!confirm(`Warning: "${product.name}" is currently OUT OF STOCK (${product.currentStock} ${product.unit}). Add anyway?`)) {
         this.focusSearchInput();
@@ -10622,7 +11133,14 @@ const POSManager = {
               <button onclick="POSManager.updateItemQty(${index}, ${item.qty + (item.unit === 'kg' ? 0.25 : 1)}); POSManager.focusSearchInput();" 
                       class="w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm active:bg-slate-600 font-bold select-none" title="Increase Qty">+</button>
             </div>
-            <div class="text-[10px] text-slate-400 font-mono mt-0.5">${item.unit}</div>
+            <div class="flex items-center justify-center gap-1 mt-0.5">
+              <span class="text-[10px] text-slate-400 font-mono">${item.unit}</span>
+              ${(item.unit === 'kg' || item.unit === 'g') ? `
+                <button type="button" onclick="ScaleManager.applyWeightToCartIndex(${index})" class="px-1 py-0.2 bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-700/80 text-emerald-300 rounded text-[9px] font-bold transition flex items-center gap-0.5 cursor-pointer" title="Budry Scale එකෙන් බර ලබාගන්න (Read Scale)">
+                  <span>⚖️</span> <span>Scale</span>
+                </button>
+              ` : ''}
+            </div>
           </td>
 
           <!-- 4. Line Total -->
@@ -13658,11 +14176,19 @@ const CustomerManager = {
 
     if (this.searchQuery) {
       const q = this.searchQuery.toLowerCase().trim();
-      customers = customers.filter(c =>
-        c.name.toLowerCase().includes(q) ||
-        (c.phone && c.phone.includes(q)) ||
-        (c.email && c.email.toLowerCase().includes(q))
-      );
+      const cleanDigits = q.replace(/[^0-9]/g, '');
+      customers = customers.filter(c => {
+        const name = (c.name || '').toLowerCase();
+        const phone = (c.phone || '').toLowerCase();
+        const cleanPhone = (c.phone || '').replace(/[^0-9]/g, '');
+        const email = (c.email || '').toLowerCase();
+        const addr = (c.address || '').toLowerCase();
+        return name.includes(q) ||
+          phone.includes(q) ||
+          (cleanDigits && cleanPhone.includes(cleanDigits)) ||
+          email.includes(q) ||
+          addr.includes(q);
+      });
     }
 
     if (customers.length === 0) {
@@ -13770,18 +14296,34 @@ const CustomerManager = {
     const tbody = document.getElementById('creditDebtorsTableBody');
     if (!tbody) return;
 
-    let filtered = customers.filter(c => (Number(c.creditBalance) || 0) > 0);
+    let filtered = [];
 
     if (this.creditSearchQuery) {
       const q = this.creditSearchQuery.toLowerCase().trim();
-      filtered = filtered.filter(c =>
-        c.name.toLowerCase().includes(q) ||
-        (c.phone && c.phone.includes(q))
-      );
+      const cleanDigits = q.replace(/[^0-9]/g, '');
+      // When searching, search ALL customers so 0-balance customers can also be found to issue credit!
+      filtered = customers.filter(c => {
+        const name = (c.name || '').toLowerCase();
+        const phone = (c.phone || '').toLowerCase();
+        const cleanPhone = (c.phone || '').replace(/[^0-9]/g, '');
+        const school = (c.schoolName || c.schoolCode || '').toLowerCase();
+        const addr = (c.address || '').toLowerCase();
+        return name.includes(q) ||
+          phone.includes(q) ||
+          (cleanDigits && cleanPhone.includes(cleanDigits)) ||
+          school.includes(q) ||
+          addr.includes(q);
+      });
+      // Sort by debtors first, then by name
+      filtered.sort((a, b) => (Number(b.creditBalance || 0)) - (Number(a.creditBalance || 0)));
+    } else {
+      // Default: Active debtors with outstanding credit balance > 0
+      filtered = customers.filter(c => (Number(c.creditBalance) || 0) > 0);
+      filtered.sort((a, b) => (Number(b.creditBalance || 0)) - (Number(a.creditBalance || 0)));
     }
 
     if (filtered.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="5" class="text-center py-8 text-slate-500">No outstanding credit balances found.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="5" class="text-center py-8 text-slate-500">ගැලපෙන පාරිභෝගිකයින් හමු නොවීය (No matching customers found).</td></tr>`;
       return;
     }
 
@@ -13926,17 +14468,25 @@ const CustomerManager = {
     if (!container) return;
 
     const q = (query || '').toLowerCase().trim();
+    const cleanDigits = q.replace(/[^0-9]/g, '');
     let customers = await db.customers.toArray();
     if (this.posCustomerFilterType === 'school') {
       customers = customers.filter(c => c.isSchool === true || c.customerType === 'school' || (c.schoolName && c.schoolName.trim() !== ''));
     }
 
     if (q) {
-      customers = customers.filter(c => 
-        (c.name && c.name.toLowerCase().includes(q)) || 
-        (c.phone && c.phone.includes(q)) ||
-        (c.schoolName && c.schoolName.toLowerCase().includes(q))
-      );
+      customers = customers.filter(c => {
+        const name = (c.name || '').toLowerCase();
+        const phone = (c.phone || '').toLowerCase();
+        const cleanPhone = (c.phone || '').replace(/[^0-9]/g, '');
+        const school = (c.schoolName || c.schoolCode || '').toLowerCase();
+        const addr = (c.address || '').toLowerCase();
+        return name.includes(q) ||
+          phone.includes(q) ||
+          (cleanDigits && cleanPhone.includes(cleanDigits)) ||
+          school.includes(q) ||
+          addr.includes(q);
+      });
     }
 
     this.renderCustomerSelectCards(customers, container);
@@ -15048,7 +15598,7 @@ const FarmerManager = {
     if (!select) return;
 
     const farmers = await db.farmers.toArray();
-    farmers.sort((a, b) => a.name.localeCompare(b.name));
+    farmers.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
     const currentVal = select.value;
     select.innerHTML = `<option value="">-- ගොවියා තෝරන්න / Choose Existing Farmer --</option>` +
@@ -15094,8 +15644,9 @@ const FarmerManager = {
   // =========================================================
   // FAST SEARCHABLE FARMER PICKER (Search by SKU / Name / Phone)
   // =========================================================
-  onFarmerPickerInput(query) {
+  async onFarmerPickerInput(query) {
     const q = (query || '').trim().toLowerCase();
+    const cleanDigits = q.replace(/[^0-9]/g, '');
     const dropdown = document.getElementById('farmerPickerSearchResults');
     const clearBtn = document.getElementById('farmerPickerClearBtn');
 
@@ -15109,12 +15660,21 @@ const FarmerManager = {
 
     if (clearBtn) clearBtn.classList.remove('hidden');
 
+    if (!this.cachedFarmers || this.cachedFarmers.length === 0) {
+      await this.cacheFarmers();
+    }
+
     const results = (this.cachedFarmers || []).filter(f => {
       const code = (f.farmerCode || '').toLowerCase();
       const name = (f.name || '').toLowerCase();
       const phone = (f.phone || '').toLowerCase();
+      const cleanPhone = (f.phone || '').replace(/[^0-9]/g, '');
       const addr = (f.address || '').toLowerCase();
-      return code.includes(q) || name.includes(q) || phone.includes(q) || addr.includes(q);
+      return code.includes(q) ||
+        name.includes(q) ||
+        phone.includes(q) ||
+        (cleanDigits && cleanPhone.includes(cleanDigits)) ||
+        addr.includes(q);
     });
 
     // Prioritize exact code match (e.g. "01" or "g-01"), then startsWith code, then name
@@ -16017,12 +16577,19 @@ const FarmerManager = {
 
     if (this.farmerSearchQuery) {
       const q = this.farmerSearchQuery.toLowerCase().trim();
-      farmers = farmers.filter(f =>
-        (f.name && f.name.toLowerCase().includes(q)) ||
-        (f.farmerCode && f.farmerCode.toLowerCase().includes(q)) ||
-        (f.phone && f.phone.includes(q)) ||
-        (f.address && f.address.toLowerCase().includes(q))
-      );
+      const cleanDigits = q.replace(/[^0-9]/g, '');
+      farmers = farmers.filter(f => {
+        const name = (f.name || '').toLowerCase();
+        const code = (f.farmerCode || '').toLowerCase();
+        const phone = (f.phone || '').toLowerCase();
+        const cleanPhone = (f.phone || '').replace(/[^0-9]/g, '');
+        const addr = (f.address || '').toLowerCase();
+        return name.includes(q) ||
+          code.includes(q) ||
+          phone.includes(q) ||
+          (cleanDigits && cleanPhone.includes(cleanDigits)) ||
+          addr.includes(q);
+      });
     }
 
     // Sort by outstanding balance desc, then name
@@ -17444,12 +18011,19 @@ const SchoolCreditManager = {
     let schools = await this.getSchoolCustomers();
     if (this.searchQuery) {
       const q = this.searchQuery.toLowerCase().trim();
-      schools = schools.filter(s =>
-        (s.name && s.name.toLowerCase().includes(q)) ||
-        (s.schoolCode && s.schoolCode.toLowerCase().includes(q)) ||
-        (s.phone && s.phone.includes(q)) ||
-        (s.address && s.address.toLowerCase().includes(q))
-      );
+      const cleanDigits = q.replace(/[^0-9]/g, '');
+      schools = schools.filter(s => {
+        const name = (s.name || '').toLowerCase();
+        const code = (s.schoolCode || '').toLowerCase();
+        const phone = (s.phone || '').toLowerCase();
+        const cleanPhone = (s.phone || '').replace(/[^0-9]/g, '');
+        const addr = (s.address || '').toLowerCase();
+        return name.includes(q) ||
+          code.includes(q) ||
+          phone.includes(q) ||
+          (cleanDigits && cleanPhone.includes(cleanDigits)) ||
+          addr.includes(q);
+      });
     }
 
     if (schools.length === 0) {
@@ -20965,6 +21539,16 @@ const App = {
     } catch (e) {
       console.warn('[App] Shift init error:', e);
     }
+
+    // Warm up farmers & electronic scale manager in background
+    try {
+      if (window.FarmerManager) {
+        FarmerManager.cacheFarmers().catch(() => {});
+      }
+      if (window.ScaleManager) {
+        ScaleManager.init().catch(() => {});
+      }
+    } catch (e) {}
 
     // 6. Init POS Module & Dashboard safely
     try {

@@ -783,6 +783,7 @@ $jsFiles = @(
     'auth.js',
     'i18n.js',
     'audio.js',
+    'scale.js',
     'pos.js',
     'inventory.js',
     'grn.js',

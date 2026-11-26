@@ -1469,6 +1469,14 @@ input[type=number] {
                 <svg class="w-4 h-4 absolute left-3 top-2.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
               </div>
 
+              <!-- Budry Scale Live Indicator & Settings Button -->
+              <button id="posScaleConnectBtn" type="button" onclick="ScaleManager.toggleConnection()" 
+                      class="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shrink-0 border border-slate-700 cursor-pointer" 
+                      title="Budry Electronic Scale (MFD-51)">
+                <span id="posScaleIcon" class="text-sm">⚖️</span>
+                <span id="posScaleStatusText" class="font-mono">Scale</span>
+              </button>
+
               <!-- Camera Scanner Button -->
               <button onclick="App.startCameraScanner()" class="px-3 py-2 bg-slate-800 hover:bg-sky-600 text-slate-200 hover:text-white rounded-xl text-xs font-semibold transition flex items-center gap-1.5 shrink-0" title="Scan with Camera">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
@@ -2152,7 +2160,12 @@ input[type=number] {
 
                   <!-- Weight in KG -->
                   <div class="sm:col-span-2 space-y-1">
-                    <label class="block text-slate-300 font-semibold">බර (KG) *</label>
+                    <label class="block text-slate-300 font-semibold flex items-center justify-between">
+                      <span>බර (KG) *</span>
+                      <button type="button" onclick="ScaleManager.captureWeightForFarmerIntake()" class="text-[10px] text-emerald-400 hover:text-emerald-300 font-bold flex items-center gap-0.5 cursor-pointer" title="Budry Scale එකෙන් බර ලබාගන්න (Read Scale)">
+                        <span>⚖️</span> <span>Scale</span>
+                      </button>
+                    </label>
                     <input id="farmerVegWeightInput" type="number" step="0.05" min="0.01" placeholder="25.5"
                            onkeydown="if(event.key === 'Enter'){ event.preventDefault(); const p = document.getElementById('farmerVegPriceInput'); if(p){ p.focus(); p.select(); } }"
                            class="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-xl text-slate-100 font-mono font-bold text-sm focus:border-emerald-500" />
@@ -5481,6 +5494,107 @@ input[type=number] {
         </div>
       </div>
 
+    </div>
+  </div>
+
+  <!-- Budry Electronic Scales (MFD-51) Management Modal -->
+  <div id="scaleSettingsModal" class="app-modal fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 hidden">
+    <div class="w-full max-w-lg bg-slate-900 border border-slate-700/80 rounded-3xl shadow-2xl flex flex-col max-h-[92vh] overflow-hidden">
+      <!-- Modal Header -->
+      <div class="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between shrink-0 bg-slate-850">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-xl">
+            ⚖️
+          </div>
+          <div>
+            <h3 class="text-sm sm:text-base font-extrabold text-slate-100 flex items-center gap-2">
+              <span>Budry Electronic Scales (MFD-51)</span>
+            </h3>
+            <p class="text-xs text-slate-400">RS-232 / USB Cable Digital Weight Integration</p>
+          </div>
+        </div>
+        <button type="button" onclick="ScaleManager.closeScaleModal()" class="text-slate-400 hover:text-white text-xl p-1 leading-none">&times;</button>
+      </div>
+
+      <!-- Modal Body -->
+      <div class="p-4 sm:p-5 overflow-y-auto space-y-4 text-xs">
+        <!-- Live Weight Card -->
+        <div class="p-4 bg-slate-950 border border-slate-800 rounded-2xl flex flex-col items-center justify-center text-center relative overflow-hidden">
+          <div class="flex items-center justify-between w-full mb-1">
+            <span class="text-[11px] font-bold text-slate-400">LIVE WEIGHT STREAM (සජීවී බර)</span>
+            <span id="scaleModalStableBadge" class="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">STANDBY</span>
+          </div>
+          <div id="scaleModalLiveWeight" class="text-4xl sm:text-5xl font-black font-mono text-emerald-400 tracking-wider my-2">
+            0.000 kg
+          </div>
+          <div class="flex items-center gap-2 mt-2">
+            <button type="button" onclick="ScaleManager.tare()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl font-bold transition flex items-center gap-1 shadow cursor-pointer">
+              <span>🎯</span> <span>Tare (ශුන්‍ය කරන්න)</span>
+            </button>
+            <button type="button" onclick="ScaleManager.zero()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-200 rounded-xl font-bold transition cursor-pointer">
+              <span>Reset Zero</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Connection Settings -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div class="space-y-1">
+            <label class="block text-slate-300 font-bold">Baud Rate (සම්බන්ධතා වේගය):</label>
+            <select id="scaleBaudRateSelect" onchange="ScaleManager.setBaudRate(this.value)" class="w-full p-2.5 bg-slate-950 border border-slate-700 rounded-xl text-slate-100 font-mono text-xs focus:border-sky-500">
+              <option value="9600">9600 bps (Budry MFD-51 Standard)</option>
+              <option value="4800">4800 bps</option>
+              <option value="2400">2400 bps</option>
+              <option value="19200">19200 bps</option>
+              <option value="115200">115200 bps</option>
+            </select>
+          </div>
+
+          <div class="space-y-1">
+            <label class="block text-slate-300 font-bold">Scale Port Status:</label>
+            <div class="flex items-center h-10">
+              <span id="scaleModalConnBadge" class="px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-800 text-slate-400 border border-slate-700">DISCONNECTED</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Auto Apply Checkbox -->
+        <div class="p-3 bg-slate-850 border border-slate-800 rounded-xl flex items-center justify-between">
+          <div>
+            <div class="font-bold text-slate-200">Auto-apply Weight to POS Qty</div>
+            <div class="text-[11px] text-slate-400">එළවළු/පළතුරු හෝ KG භාණ්ඩ Add කළ විට Scale එකේ බර Auto වැටේ</div>
+          </div>
+          <input type="checkbox" id="scaleAutoApplyCheck" onchange="ScaleManager.toggleAutoApply(this.checked)" class="w-5 h-5 accent-emerald-500 rounded cursor-pointer" checked />
+        </div>
+
+        <!-- Raw Diagnostic Log Terminal -->
+        <div class="space-y-1">
+          <label class="block text-slate-400 text-[11px] font-mono">Serial Raw Data Monitor (RX):</label>
+          <pre id="scaleModalLogBox" class="p-2.5 bg-slate-950 border border-slate-800 rounded-xl text-[10px] font-mono text-emerald-400/90 h-24 overflow-y-auto whitespace-pre-wrap select-all">Waiting for scale data...</pre>
+        </div>
+
+        <!-- Setup Instructions -->
+        <div class="p-3 bg-sky-950/30 border border-sky-800/40 rounded-xl space-y-1 text-slate-300">
+          <div class="font-bold text-sky-400 flex items-center gap-1.5">
+            <span>ℹ️</span> <span>Budry MFD-51 සම්බන්ධ කරගන්නා ආකාරය:</span>
+          </div>
+          <ol class="list-decimal list-inside space-y-1 text-[11px] text-slate-300 leading-relaxed">
+            <li>Budry MFD-51 පරිමාණයේ පිටුපස RS-232 Port එකෙන් USB-to-RS232 Converter Cable එක පරිගණකයට සම්බන්ධ කරන්න.</li>
+            <li>පහත 'Connect Budry Scale' ඔබා Chrome/Edge හි දිස්වන COM Port එක (Prolific / CH340 / FTDI) තෝරන්න.</li>
+            <li>පරිමාණයේ තැබූ බර මෙහි සජීවීව පෙන්වයි. POS වෙතින් භාණ්ඩය Search කර Add කළ විට එම බර Qty එකට ස්වයංක්‍රීයව එක්වේ!</li>
+          </ol>
+        </div>
+      </div>
+
+      <!-- Modal Footer -->
+      <div class="p-4 bg-slate-950 border-t border-slate-800 flex items-center justify-between shrink-0">
+        <button id="scaleModalToggleBtn" type="button" onclick="ScaleManager.toggleConnection()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition shadow-md shadow-emerald-600/30 cursor-pointer">
+          🟢 Connect Budry Scale
+        </button>
+        <button type="button" onclick="ScaleManager.closeScaleModal()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition cursor-pointer">
+          වසන්න (Close)
+        </button>
+      </div>
     </div>
   </div>
 

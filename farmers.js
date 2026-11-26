@@ -185,7 +185,7 @@ const FarmerManager = {
     if (!select) return;
 
     const farmers = await db.farmers.toArray();
-    farmers.sort((a, b) => a.name.localeCompare(b.name));
+    farmers.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
     const currentVal = select.value;
     select.innerHTML = `<option value="">-- ගොවියා තෝරන්න / Choose Existing Farmer --</option>` +
@@ -231,8 +231,9 @@ const FarmerManager = {
   // =========================================================
   // FAST SEARCHABLE FARMER PICKER (Search by SKU / Name / Phone)
   // =========================================================
-  onFarmerPickerInput(query) {
+  async onFarmerPickerInput(query) {
     const q = (query || '').trim().toLowerCase();
+    const cleanDigits = q.replace(/[^0-9]/g, '');
     const dropdown = document.getElementById('farmerPickerSearchResults');
     const clearBtn = document.getElementById('farmerPickerClearBtn');
 
@@ -246,12 +247,21 @@ const FarmerManager = {
 
     if (clearBtn) clearBtn.classList.remove('hidden');
 
+    if (!this.cachedFarmers || this.cachedFarmers.length === 0) {
+      await this.cacheFarmers();
+    }
+
     const results = (this.cachedFarmers || []).filter(f => {
       const code = (f.farmerCode || '').toLowerCase();
       const name = (f.name || '').toLowerCase();
       const phone = (f.phone || '').toLowerCase();
+      const cleanPhone = (f.phone || '').replace(/[^0-9]/g, '');
       const addr = (f.address || '').toLowerCase();
-      return code.includes(q) || name.includes(q) || phone.includes(q) || addr.includes(q);
+      return code.includes(q) ||
+        name.includes(q) ||
+        phone.includes(q) ||
+        (cleanDigits && cleanPhone.includes(cleanDigits)) ||
+        addr.includes(q);
     });
 
     // Prioritize exact code match (e.g. "01" or "g-01"), then startsWith code, then name
@@ -1154,12 +1164,19 @@ const FarmerManager = {
 
     if (this.farmerSearchQuery) {
       const q = this.farmerSearchQuery.toLowerCase().trim();
-      farmers = farmers.filter(f =>
-        (f.name && f.name.toLowerCase().includes(q)) ||
-        (f.farmerCode && f.farmerCode.toLowerCase().includes(q)) ||
-        (f.phone && f.phone.includes(q)) ||
-        (f.address && f.address.toLowerCase().includes(q))
-      );
+      const cleanDigits = q.replace(/[^0-9]/g, '');
+      farmers = farmers.filter(f => {
+        const name = (f.name || '').toLowerCase();
+        const code = (f.farmerCode || '').toLowerCase();
+        const phone = (f.phone || '').toLowerCase();
+        const cleanPhone = (f.phone || '').replace(/[^0-9]/g, '');
+        const addr = (f.address || '').toLowerCase();
+        return name.includes(q) ||
+          code.includes(q) ||
+          phone.includes(q) ||
+          (cleanDigits && cleanPhone.includes(cleanDigits)) ||
+          addr.includes(q);
+      });
     }
 
     // Sort by outstanding balance desc, then name

@@ -115,12 +115,19 @@ const SchoolCreditManager = {
     let schools = await this.getSchoolCustomers();
     if (this.searchQuery) {
       const q = this.searchQuery.toLowerCase().trim();
-      schools = schools.filter(s =>
-        (s.name && s.name.toLowerCase().includes(q)) ||
-        (s.schoolCode && s.schoolCode.toLowerCase().includes(q)) ||
-        (s.phone && s.phone.includes(q)) ||
-        (s.address && s.address.toLowerCase().includes(q))
-      );
+      const cleanDigits = q.replace(/[^0-9]/g, '');
+      schools = schools.filter(s => {
+        const name = (s.name || '').toLowerCase();
+        const code = (s.schoolCode || '').toLowerCase();
+        const phone = (s.phone || '').toLowerCase();
+        const cleanPhone = (s.phone || '').replace(/[^0-9]/g, '');
+        const addr = (s.address || '').toLowerCase();
+        return name.includes(q) ||
+          code.includes(q) ||
+          phone.includes(q) ||
+          (cleanDigits && cleanPhone.includes(cleanDigits)) ||
+          addr.includes(q);
+      });
     }
 
     if (schools.length === 0) {

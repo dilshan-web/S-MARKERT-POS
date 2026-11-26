@@ -29,11 +29,19 @@ const CustomerManager = {
 
     if (this.searchQuery) {
       const q = this.searchQuery.toLowerCase().trim();
-      customers = customers.filter(c =>
-        c.name.toLowerCase().includes(q) ||
-        (c.phone && c.phone.includes(q)) ||
-        (c.email && c.email.toLowerCase().includes(q))
-      );
+      const cleanDigits = q.replace(/[^0-9]/g, '');
+      customers = customers.filter(c => {
+        const name = (c.name || '').toLowerCase();
+        const phone = (c.phone || '').toLowerCase();
+        const cleanPhone = (c.phone || '').replace(/[^0-9]/g, '');
+        const email = (c.email || '').toLowerCase();
+        const addr = (c.address || '').toLowerCase();
+        return name.includes(q) ||
+          phone.includes(q) ||
+          (cleanDigits && cleanPhone.includes(cleanDigits)) ||
+          email.includes(q) ||
+          addr.includes(q);
+      });
     }
 
     if (customers.length === 0) {
@@ -141,18 +149,34 @@ const CustomerManager = {
     const tbody = document.getElementById('creditDebtorsTableBody');
     if (!tbody) return;
 
-    let filtered = customers.filter(c => (Number(c.creditBalance) || 0) > 0);
+    let filtered = [];
 
     if (this.creditSearchQuery) {
       const q = this.creditSearchQuery.toLowerCase().trim();
-      filtered = filtered.filter(c =>
-        c.name.toLowerCase().includes(q) ||
-        (c.phone && c.phone.includes(q))
-      );
+      const cleanDigits = q.replace(/[^0-9]/g, '');
+      // When searching, search ALL customers so 0-balance customers can also be found to issue credit!
+      filtered = customers.filter(c => {
+        const name = (c.name || '').toLowerCase();
+        const phone = (c.phone || '').toLowerCase();
+        const cleanPhone = (c.phone || '').replace(/[^0-9]/g, '');
+        const school = (c.schoolName || c.schoolCode || '').toLowerCase();
+        const addr = (c.address || '').toLowerCase();
+        return name.includes(q) ||
+          phone.includes(q) ||
+          (cleanDigits && cleanPhone.includes(cleanDigits)) ||
+          school.includes(q) ||
+          addr.includes(q);
+      });
+      // Sort by debtors first, then by name
+      filtered.sort((a, b) => (Number(b.creditBalance || 0)) - (Number(a.creditBalance || 0)));
+    } else {
+      // Default: Active debtors with outstanding credit balance > 0
+      filtered = customers.filter(c => (Number(c.creditBalance) || 0) > 0);
+      filtered.sort((a, b) => (Number(b.creditBalance || 0)) - (Number(a.creditBalance || 0)));
     }
 
     if (filtered.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="5" class="text-center py-8 text-slate-500">No outstanding credit balances found.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="5" class="text-center py-8 text-slate-500">ගැලපෙන පාරිභෝගිකයින් හමු නොවීය (No matching customers found).</td></tr>`;
       return;
     }
 
@@ -297,17 +321,25 @@ const CustomerManager = {
     if (!container) return;
 
     const q = (query || '').toLowerCase().trim();
+    const cleanDigits = q.replace(/[^0-9]/g, '');
     let customers = await db.customers.toArray();
     if (this.posCustomerFilterType === 'school') {
       customers = customers.filter(c => c.isSchool === true || c.customerType === 'school' || (c.schoolName && c.schoolName.trim() !== ''));
     }
 
     if (q) {
-      customers = customers.filter(c => 
-        (c.name && c.name.toLowerCase().includes(q)) || 
-        (c.phone && c.phone.includes(q)) ||
-        (c.schoolName && c.schoolName.toLowerCase().includes(q))
-      );
+      customers = customers.filter(c => {
+        const name = (c.name || '').toLowerCase();
+        const phone = (c.phone || '').toLowerCase();
+        const cleanPhone = (c.phone || '').replace(/[^0-9]/g, '');
+        const school = (c.schoolName || c.schoolCode || '').toLowerCase();
+        const addr = (c.address || '').toLowerCase();
+        return name.includes(q) ||
+          phone.includes(q) ||
+          (cleanDigits && cleanPhone.includes(cleanDigits)) ||
+          school.includes(q) ||
+          addr.includes(q);
+      });
     }
 
     this.renderCustomerSelectCards(customers, container);
